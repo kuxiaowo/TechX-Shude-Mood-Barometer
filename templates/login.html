@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}登录 - 学生心情晴雨表{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block body %}
+<main class="auth-wrap">
+  <section class="auth-card">
+    <div class="auth-visual" aria-hidden="true"></div>
+    <div class="auth-panel">
+      <a class="brand" href="{{ url_for('login') }}">Mood Barometer</a>
+      <div class="auth-heading">
+        <p class="eyebrow">学生每日心情收集</p>
+        <h1>登录账户</h1>
+      </div>
+
+      {% include "_flash.html" %}
+
+      <form class="form-stack" method="post" action="{{ url_for('login', next=request.args.get('next')) }}">
+        <label>
+          <span>昵称</span>
+          <input name="nickname" autocomplete="username" required>
+        </label>
+        <label>
+          <span>密码</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="primary-button" type="submit">登录账户</button>
+      </form>
+
+      <p class="auth-switch">还没有账户吗？<a href="{{ url_for('register') }}">注册账户</a></p>
+    </div>
+  </section>
+</main>
+{% endblock %}

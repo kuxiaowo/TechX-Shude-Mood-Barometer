@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block body_class %}dashboard-page{% endblock %}
+
+{% block body %}
+<div class="dashboard-shell">
+  <aside class="sidebar">
+    <a class="sidebar-brand" href="{{ url_for('profile') }}">
+      <span class="brand-mark">心</span>
+      <span>晴雨表</span>
+    </a>
+
+    <nav class="nav-list" aria-label="主导航">
+      <a class="nav-item {% if active_page == 'profile' %}is-active{% endif %}" href="{{ url_for('profile') }}">
+        <span>个人资料</span>
+      </a>
+      <a class="nav-item {% if active_page == 'mood_report' %}is-active{% endif %}" href="{{ url_for('mood_report') }}">
+        <span>心情报表</span>
+      </a>
+      <a class="nav-item {% if active_page == 'mood_calendar' %}is-active{% endif %}" href="{{ url_for('mood_calendar') }}">
+        <span>心情日历</span>
+      </a>
+    </nav>
+
+    <form class="logout-form" method="post" action="{{ url_for('logout') }}">
+      <button class="ghost-button" type="submit">退出登录</button>
+    </form>
+
+    <div class="sidebar-user">
+      <div class="avatar">{{ current_user["real_name"][:1] }}</div>
+      <div>
+        <strong>{{ current_user["real_name"] }}</strong>
+        <span>@{{ current_user["nickname"] }}</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="content-card">
+    {% include "_flash.html" %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <aside class="support-panel">
+    <h2>记录提示</h2>
+    <p>每天可以记录多次心情；日历会显示当天最后一次提交。</p>
+    <a class="outline-button" href="{{ url_for('mood_report') }}">记录今天</a>
+
+    <div class="recent-block">
+      <h3>最近记录</h3>
+      {% if recent_entries %}
+        <ul class="recent-list">
+          {% for entry in recent_entries %}
+            <li>
+              <span class="recent-emoji">{{ entry["mood_emoji"] }}</span>
+              <div>
+                <strong>{{ entry["entry_date"] }}</strong>
+                <p>{{ entry["reason"] }}</p>
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">还没有心情记录。</p>
+      {% endif %}
+    </div>
+  </aside>
+</div>
+{% endblock %}

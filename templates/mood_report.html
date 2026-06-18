@@ -1,0 +1,32 @@
+{% extends "dashboard.html" %}
+
+{% block title %}心情报表 - 学生心情晴雨表{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">心情报表</p>
+  <h1>记录今天的心情</h1>
+</section>
+
+<form class="mood-form" method="post" action="{{ url_for('mood_report') }}">
+  <fieldset class="mood-picker">
+    <legend>选择一个最接近的心情</legend>
+    <div class="mood-options">
+      {% for mood in moods %}
+        <label class="mood-option">
+          <input type="radio" name="mood_emoji" value="{{ mood.emoji }}" required>
+          <span class="mood-emoji">{{ mood.emoji }}</span>
+          <span class="mood-label">{{ mood.label }}</span>
+        </label>
+      {% endfor %}
+    </div>
+  </fieldset>
+
+  <label class="reason-field">
+    <span>造成这个心情的原因</span>
+    <textarea name="reason" rows="8" placeholder="例如：今天小测顺利、和朋友聊得很好，或者有些事情让我担心。" required></textarea>
+  </label>
+
+  <button class="primary-button compact" type="submit">提交心情</button>
+</form>
+{% endblock %}

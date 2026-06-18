@@ -1,0 +1,47 @@
+{% extends "dashboard.html" %}
+
+{% block title %}心情日历 - 学生心情晴雨表{% endblock %}
+
+{% block content %}
+<section class="page-heading calendar-heading">
+  <div>
+    <p class="eyebrow">心情日历</p>
+    <h1>{{ selected_month.year }} 年 {{ selected_month.month }} 月</h1>
+  </div>
+  <div class="month-actions" aria-label="切换月份">
+    <a class="outline-button" href="{{ url_for('mood_calendar', month=prev_month) }}">上个月</a>
+    <a class="outline-button" href="{{ url_for('mood_calendar', month=next_month) }}">下个月</a>
+  </div>
+</section>
+
+<section class="calendar-grid" aria-label="按月心情日历">
+  <div class="weekday">周一</div>
+  <div class="weekday">周二</div>
+  <div class="weekday">周三</div>
+  <div class="weekday">周四</div>
+  <div class="weekday">周五</div>
+  <div class="weekday">周六</div>
+  <div class="weekday">周日</div>
+
+  {% for week in calendar_rows %}
+    {% for cell in week %}
+      <div class="day-cell {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}">
+        <span class="day-number">{{ cell.date.day }}</span>
+        {% if cell.entry %}
+          <span class="day-emoji">{{ cell.entry["mood_emoji"] }}</span>
+          <p>{{ cell.entry["reason"] }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endfor %}
+</section>
+
+<section class="month-summary">
+  <h2>本月概览</h2>
+  {% if month_entries %}
+    <p>本月已有 {{ month_entries|length }} 天留下了心情记录。</p>
+  {% else %}
+    <p>这个月还没有记录。今天可以先写一条，日历就不空着了。</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "dashboard.html" %}
+
+{% block title %}用户详情 - 学生心情晴雨表{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">用户详情</p>
+  <h1>你好，{{ current_user["real_name"] }}</h1>
+</section>
+
+<section class="profile-grid" aria-label="用户资料">
+  <div class="info-tile">
+    <span>姓名</span>
+    <strong>{{ current_user["real_name"] }}</strong>
+  </div>
+  <div class="info-tile">
+    <span>昵称</span>
+    <strong>{{ current_user["nickname"] }}</strong>
+  </div>
+  <div class="info-tile">
+    <span>注册时间</span>
+    <strong>{{ current_user["created_at"] | datetime_cn }}</strong>
+  </div>
+</section>
+{% endblock %}
