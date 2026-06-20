@@ -1,5 +1,46 @@
+# Python caches
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Test and coverage output
 .pytest_cache/
-*.pyc
-mood_barometer.sqlite3
+.pytest-tmp/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment files
 .env
+.env.*
+!.env.example
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+
+# Build output
+build/
+dist/
+*.egg-info/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

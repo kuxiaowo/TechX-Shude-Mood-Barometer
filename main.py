@@ -47,7 +47,7 @@ def load_env_file(path: Path) -> None:
 BASE_DIR = Path(__file__).resolve().parent
 load_env_file(BASE_DIR / ".env")
 
-DEFAULT_DATABASE = BASE_DIR / "mood_barometer.sqlite3"
+DEFAULT_DATABASE = BASE_DIR / "data" / "mood_barometer.sqlite3"
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 

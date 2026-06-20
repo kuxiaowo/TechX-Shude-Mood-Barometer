@@ -8,7 +8,7 @@ from werkzeug.security import generate_password_hash
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_DATABASE = BASE_DIR / "mood_barometer.sqlite3"
+DEFAULT_DATABASE = BASE_DIR / "data" / "mood_barometer.sqlite3"
 DEMO_PASSWORD = "test123456"
 
 

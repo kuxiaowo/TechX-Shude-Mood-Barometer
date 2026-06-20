@@ -3,6 +3,13 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-"$ROOT_DIR/.env"}"
+case "$ENV_FILE" in
+  /*)
+    ;;
+  *)
+    ENV_FILE="$ROOT_DIR/$ENV_FILE"
+    ;;
+esac
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing env file: $ENV_FILE" >&2
@@ -17,6 +24,14 @@ set +a
 
 : "${ADMIN_NICKNAME:?ADMIN_NICKNAME is required in .env}"
 : "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required in .env}"
+
+INSTALL_SYSTEMD_SERVICE="${INSTALL_SYSTEMD_SERVICE:-1}"
+SYSTEMD_SERVICE_NAME="${SYSTEMD_SERVICE_NAME:-techx-shude-mood-barometer}"
+SYSTEMD_SERVICE_USER="${SYSTEMD_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
+SYSTEMD_START_NOW="${SYSTEMD_START_NOW:-0}"
+APP_HOST="${APP_HOST:-127.0.0.1}"
+PORT="${PORT:-5000}"
+SYSTEMD_PYTHON="${SYSTEMD_PYTHON:-}"
 
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT_DIR"
@@ -40,7 +55,7 @@ def env_value(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
-database_value = env_value("MOOD_DB_PATH", "mood_barometer.sqlite3")
+database_value = env_value("MOOD_DB_PATH", "data/mood_barometer.sqlite3")
 database_path = Path(database_value)
 if not database_path.is_absolute():
     database_path = BASE_DIR / database_path
@@ -151,3 +166,95 @@ with sqlite3.connect(database_path) as db:
 print(f"Database initialized: {database_path}")
 print(f"Admin account {action}: {admin_nickname}")
 PY
+
+resolve_service_python() {
+  if [ -n "$SYSTEMD_PYTHON" ]; then
+    printf '%s\n' "$SYSTEMD_PYTHON"
+    return
+  fi
+
+  if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    printf '%s\n' "$ROOT_DIR/.venv/bin/python"
+    return
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return
+  fi
+
+  command -v python
+}
+
+create_systemd_service() {
+  case "$INSTALL_SYSTEMD_SERVICE" in
+    1|true|TRUE|yes|YES)
+      ;;
+    0|false|FALSE|no|NO)
+      echo "Systemd service creation skipped: INSTALL_SYSTEMD_SERVICE=$INSTALL_SYSTEMD_SERVICE"
+      return
+      ;;
+    *)
+      echo "INSTALL_SYSTEMD_SERVICE must be 1 or 0." >&2
+      exit 1
+      ;;
+  esac
+
+  case "$SYSTEMD_SERVICE_NAME" in
+    ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.@-]*)
+      echo "SYSTEMD_SERVICE_NAME contains invalid characters." >&2
+      exit 1
+      ;;
+  esac
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "systemctl is required to create the auto-start service." >&2
+    echo "Set INSTALL_SYSTEMD_SERVICE=0 in .env to only initialize the database/admin account." >&2
+    exit 1
+  fi
+
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Creating a systemd service requires root." >&2
+    echo "Re-run with sudo, or set INSTALL_SYSTEMD_SERVICE=0 in .env to skip service creation." >&2
+    exit 1
+  fi
+
+  service_python="$(resolve_service_python)"
+  service_file="/etc/systemd/system/$SYSTEMD_SERVICE_NAME.service"
+  tmp_file="$(mktemp)"
+
+  cat > "$tmp_file" <<SERVICE
+[Unit]
+Description=TechX Shude Mood Barometer
+After=network.target
+
+[Service]
+Type=simple
+User=$SYSTEMD_SERVICE_USER
+WorkingDirectory=$ROOT_DIR
+Environment=APP_HOST=$APP_HOST
+Environment=PORT=$PORT
+Environment=PYTHONPATH=$ROOT_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=$service_python -m uvicorn main:app --host \${APP_HOST} --port \${PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+  install -m 0644 "$tmp_file" "$service_file"
+  rm -f "$tmp_file"
+  systemctl daemon-reload
+  systemctl enable "$SYSTEMD_SERVICE_NAME"
+
+  if [ "$SYSTEMD_START_NOW" = "1" ]; then
+    systemctl restart "$SYSTEMD_SERVICE_NAME"
+  fi
+
+  echo "Systemd service installed: $service_file"
+  echo "Service enabled: $SYSTEMD_SERVICE_NAME"
+}
+
+create_systemd_service

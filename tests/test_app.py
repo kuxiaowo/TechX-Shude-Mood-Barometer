@@ -555,6 +555,23 @@ def test_scroll_lists_adapt_to_available_card_height_and_calendar_links_have_no_
     assert "text-decoration: none;" in calendar_hover_rule
 
 
+def test_init_script_creates_systemd_service_from_env_example():
+    script = Path("scripts/init_admin.sh").read_text(encoding="utf-8")
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+
+    assert "create_systemd_service" in script
+    assert "/etc/systemd/system/$SYSTEMD_SERVICE_NAME.service" in script
+    assert "ExecStart=$service_python -m uvicorn main:app" in script
+    assert "systemctl daemon-reload" in script
+    assert 'systemctl enable "$SYSTEMD_SERVICE_NAME"' in script
+    assert "SYSTEMD_START_NOW" in script
+
+    assert "INSTALL_SYSTEMD_SERVICE=1" in env_example
+    assert "SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer" in env_example
+    assert "APP_HOST=127.0.0.1" in env_example
+    assert "PORT=5000" in env_example
+
+
 def test_mood_report_requires_emoji_and_required_questions(client):
     register(client)
 
