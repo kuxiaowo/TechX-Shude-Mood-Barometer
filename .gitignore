@@ -2,3 +2,4 @@ __pycache__/
 .pytest_cache/
 *.pyc
 mood_barometer.sqlite3
+.env

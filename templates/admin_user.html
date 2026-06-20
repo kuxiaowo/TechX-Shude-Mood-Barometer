@@ -1,0 +1,75 @@
+{% extends "dashboard.html" %}
+
+{% block title %}用户心情记录 - 学生心情晴雨表{% endblock %}
+{% block content_card_class %}adaptive-scroll-card{% endblock %}
+
+{% block content %}
+<section class="page-heading admin-detail-heading">
+  <div>
+    <p class="eyebrow">用户心情记录</p>
+    <h1>{{ target_user["real_name"] }}</h1>
+  </div>
+  <a class="outline-button admin-back-link" href="{{ url_for('admin_dashboard') }}">返回用户列表</a>
+</section>
+
+<section class="admin-user-card">
+  <header class="admin-user-header">
+    <div>
+      <h2>@{{ target_user["nickname"] }}</h2>
+      <p>{{ target_user["created_at"] | datetime_cn }} 注册</p>
+    </div>
+    {% if target_user["is_admin"] %}
+      <span class="admin-badge">管理员</span>
+    {% endif %}
+  </header>
+
+  <dl class="admin-user-meta">
+    <div>
+      <dt>年级</dt>
+      <dd>{{ target_user["grade"] or "未设置" }}</dd>
+    </div>
+    <div>
+      <dt>项目</dt>
+      <dd>{{ target_user["program"] or "未设置" }}</dd>
+    </div>
+    <div>
+      <dt>记录数</dt>
+      <dd>{{ target_user["entry_count"] }}</dd>
+    </div>
+    <div>
+      <dt>最近记录</dt>
+      <dd>{{ target_user["latest_entry_at"] | datetime_cn or "暂无" }}</dd>
+    </div>
+  </dl>
+</section>
+
+<section class="admin-entry-list" aria-label="心情记录">
+  {% if entries %}
+    {% for entry in entries %}
+      <article class="admin-entry">
+        <div class="admin-entry-heading">
+          <span class="recent-emoji">
+            <span class="emoji-glyph">{{ entry["mood_emoji"] }}</span>
+          </span>
+          <div>
+            <strong>{{ entry["entry_date"] }}</strong>
+            <span class="admin-entry-time">{{ entry["created_at"] | datetime_cn }}</span>
+          </div>
+        </div>
+        <div class="reason-parts">
+          {% for part in entry["reason"] | mood_reason_parts %}
+            <section class="reason-part">
+              {% if part.question %}
+                <span class="reason-question">{{ part.question }}</span>
+              {% endif %}
+              <p class="reason-answer">{{ part.answer }}</p>
+            </section>
+          {% endfor %}
+        </div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">这个用户还没有提交心情记录。</p>
+  {% endif %}
+</section>
+{% endblock %}

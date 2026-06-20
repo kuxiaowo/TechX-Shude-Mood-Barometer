@@ -16,7 +16,7 @@
 
       {% include "_flash.html" %}
 
-      <form class="form-stack" method="post" action="{{ url_for('login', next=request.args.get('next')) }}">
+      <form class="form-stack" method="post" action="{{ url_for('login', next=request.query_params.get('next')) }}">
         <label>
           <span>昵称</span>
           <input name="nickname" autocomplete="username" required>

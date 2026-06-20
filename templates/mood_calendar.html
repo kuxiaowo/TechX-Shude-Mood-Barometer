@@ -25,13 +25,20 @@
 
   {% for week in calendar_rows %}
     {% for cell in week %}
-      <div class="day-cell {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}">
-        <span class="day-number">{{ cell.date.day }}</span>
-        {% if cell.entry %}
+      {% if cell.entry %}
+        <a
+          class="day-cell has-entry {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}"
+          href="{{ url_for('mood_history') }}#entry-{{ cell.entry['id'] }}"
+          aria-label="查看 {{ cell.date.isoformat() }} 的心情记录"
+        >
+          <span class="day-number">{{ cell.date.day }}</span>
           <span class="day-emoji">{{ cell.entry["mood_emoji"] }}</span>
-          <p>{{ cell.entry["reason"] }}</p>
-        {% endif %}
-      </div>
+        </a>
+      {% else %}
+        <div class="day-cell {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}">
+          <span class="day-number">{{ cell.date.day }}</span>
+        </div>
+      {% endif %}
     {% endfor %}
   {% endfor %}
 </section>

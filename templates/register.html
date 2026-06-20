@@ -26,6 +26,24 @@
           <input name="nickname" autocomplete="username" required>
         </label>
         <label>
+          <span>年级（选填）</span>
+          <select name="grade">
+            <option value="">不设置</option>
+            {% for grade in grades %}
+              <option value="{{ grade }}">{{ grade }}级</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          <span>项目（选填）</span>
+          <select name="program">
+            <option value="">不设置</option>
+            {% for program in programs %}
+              <option value="{{ program }}">{{ program }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
           <span>密码</span>
           <input name="password" type="password" autocomplete="new-password" required>
         </label>

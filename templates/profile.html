@@ -16,10 +16,116 @@
   <div class="info-tile">
     <span>昵称</span>
     <strong>{{ current_user["nickname"] }}</strong>
+    <button class="outline-button info-action" type="button" data-modal-target="nickname-dialog">
+      修改昵称
+    </button>
+  </div>
+  <div class="info-tile">
+    <span>年级</span>
+    <strong>{{ current_user["grade"] or "未设置" }}</strong>
+    <button class="outline-button info-action" type="button" data-modal-target="profile-details-dialog">
+      编辑
+    </button>
+  </div>
+  <div class="info-tile">
+    <span>项目</span>
+    <strong>{{ current_user["program"] or "未设置" }}</strong>
+    <button class="outline-button info-action" type="button" data-modal-target="profile-details-dialog">
+      编辑
+    </button>
+  </div>
+  <div class="info-tile">
+    <span>密码</span>
+    <strong>已设置</strong>
+    <button class="outline-button info-action" type="button" data-modal-target="password-dialog">
+      修改密码
+    </button>
   </div>
   <div class="info-tile">
     <span>注册时间</span>
     <strong>{{ current_user["created_at"] | datetime_cn }}</strong>
   </div>
 </section>
+
+<dialog class="modal" id="profile-details-dialog">
+  <div class="modal-header">
+    <h2>编辑资料</h2>
+    <button class="modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+  </div>
+  <form class="settings-form modal-form" method="post" action="{{ url_for('update_profile_details') }}">
+    <label>
+      <span>年级</span>
+      <select name="grade">
+        <option value="">不设置</option>
+        {% for grade in grades %}
+          <option value="{{ grade }}" {% if current_user["grade"] == grade %}selected{% endif %}>
+            {{ grade }}级
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>项目</span>
+      <select name="program">
+        <option value="">不设置</option>
+        {% for program in programs %}
+          <option value="{{ program }}" {% if current_user["program"] == program %}selected{% endif %}>
+            {{ program }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button class="ghost-button compact-action" type="button" data-modal-close>取消</button>
+      <button class="primary-button compact" type="submit">保存资料</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="nickname-dialog">
+  <div class="modal-header">
+    <h2>修改昵称</h2>
+    <button class="modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+  </div>
+  <form class="settings-form modal-form" method="post" action="{{ url_for('update_nickname') }}">
+    <label>
+      <span>新昵称</span>
+      <input
+        name="nickname"
+        value="{{ current_user['nickname'] }}"
+        autocomplete="username"
+        required
+      >
+    </label>
+    <div class="modal-actions">
+      <button class="ghost-button compact-action" type="button" data-modal-close>取消</button>
+      <button class="primary-button compact" type="submit">保存昵称</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="password-dialog">
+  <div class="modal-header">
+    <h2>修改密码</h2>
+    <button class="modal-close" type="button" data-modal-close aria-label="关闭">×</button>
+  </div>
+  <form class="settings-form modal-form" method="post" action="{{ url_for('update_password') }}">
+    <label>
+      <span>当前密码</span>
+      <input name="current_password" type="password" autocomplete="current-password" required>
+    </label>
+    <label>
+      <span>新密码</span>
+      <input name="new_password" type="password" autocomplete="new-password" required>
+    </label>
+    <label>
+      <span>确认新密码</span>
+      <input name="confirm_password" type="password" autocomplete="new-password" required>
+    </label>
+    <div class="modal-actions">
+      <button class="ghost-button compact-action" type="button" data-modal-close>取消</button>
+      <button class="primary-button compact" type="submit">修改密码</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}

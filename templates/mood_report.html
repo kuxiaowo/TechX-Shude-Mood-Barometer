@@ -22,10 +22,22 @@
     </div>
   </fieldset>
 
-  <label class="reason-field">
-    <span>造成这个心情的原因</span>
-    <textarea name="reason" rows="8" placeholder="例如：今天小测顺利、和朋友聊得很好，或者有些事情让我担心。" required></textarea>
-  </label>
+  <div class="question-list">
+    <label class="reason-field question-field">
+      <span>1. 今天做了什么，什么影响了你的心情？</span>
+      <textarea name="day_event" rows="2" required></textarea>
+    </label>
+
+    <label class="reason-field question-field">
+      <span>2. 今天身体感觉怎么样？</span>
+      <textarea name="body_feeling" rows="2" required></textarea>
+    </label>
+
+    <label class="reason-field question-field">
+      <span>3. 还有什么想说的？</span>
+      <textarea name="extra_thoughts" rows="2"></textarea>
+    </label>
+  </div>
 
   <button class="primary-button compact" type="submit">提交心情</button>
 </form>

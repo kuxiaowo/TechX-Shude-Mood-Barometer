@@ -6,8 +6,7 @@
 <div class="dashboard-shell">
   <aside class="sidebar">
     <a class="sidebar-brand" href="{{ url_for('profile') }}">
-      <span class="brand-mark">心</span>
-      <span>晴雨表</span>
+      <span>心情晴雨表</span>
     </a>
 
     <nav class="nav-list" aria-label="主导航">
@@ -20,6 +19,14 @@
       <a class="nav-item {% if active_page == 'mood_calendar' %}is-active{% endif %}" href="{{ url_for('mood_calendar') }}">
         <span>心情日历</span>
       </a>
+      <a class="nav-item {% if active_page == 'mood_history' %}is-active{% endif %}" href="{{ url_for('mood_history') }}">
+        <span>历史记录</span>
+      </a>
+      {% if current_user["is_admin"] %}
+        <a class="nav-item {% if active_page == 'admin_dashboard' %}is-active{% endif %}" href="{{ url_for('admin_dashboard') }}">
+          <span>管理员后台</span>
+        </a>
+      {% endif %}
     </nav>
 
     <form class="logout-form" method="post" action="{{ url_for('logout') }}">
@@ -35,7 +42,7 @@
     </div>
   </aside>
 
-  <main class="content-card">
+  <main class="content-card {% block content_card_class %}{% endblock %}">
     {% include "_flash.html" %}
     {% block content %}{% endblock %}
   </main>
@@ -46,15 +53,29 @@
     <a class="outline-button" href="{{ url_for('mood_report') }}">记录今天</a>
 
     <div class="recent-block">
-      <h3>最近记录</h3>
+      <div class="recent-header">
+        <h3>最近记录</h3>
+        <a href="{{ url_for('mood_history') }}">查看历史</a>
+      </div>
       {% if recent_entries %}
         <ul class="recent-list">
           {% for entry in recent_entries %}
             <li>
-              <span class="recent-emoji">{{ entry["mood_emoji"] }}</span>
+              <span class="recent-emoji">
+                <span class="emoji-glyph">{{ entry["mood_emoji"] }}</span>
+              </span>
               <div>
                 <strong>{{ entry["entry_date"] }}</strong>
-                <p>{{ entry["reason"] }}</p>
+                <div class="reason-parts compact">
+                  {% for part in entry["reason"] | mood_reason_parts %}
+                    <section class="reason-part">
+                      {% if part.question %}
+                        <span class="reason-question">{{ part.question }}</span>
+                      {% endif %}
+                      <p class="reason-answer">{{ part.answer }}</p>
+                    </section>
+                  {% endfor %}
+                </div>
               </div>
             </li>
           {% endfor %}

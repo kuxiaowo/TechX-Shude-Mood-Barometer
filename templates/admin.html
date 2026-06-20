@@ -1,0 +1,78 @@
+{% extends "dashboard.html" %}
+
+{% block title %}管理员后台 - 学生心情晴雨表{% endblock %}
+{% block content_card_class %}adaptive-scroll-card{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">管理员后台</p>
+  <h1>用户列表</h1>
+</section>
+
+<form class="admin-search-form" method="get" action="{{ url_for('admin_dashboard') }}">
+  <label>
+    <span>搜索用户</span>
+    <input
+      name="q"
+      value="{{ search_query }}"
+      placeholder="输入姓名、昵称、年级或项目"
+      autocomplete="off"
+    >
+  </label>
+  <button class="primary-button compact" type="submit">搜索</button>
+  {% if search_query %}
+    <a class="outline-button admin-search-clear" href="{{ url_for('admin_dashboard') }}">清空</a>
+  {% endif %}
+</form>
+
+<section class="admin-summary" aria-label="后台概览">
+  <div>
+    <span>{% if search_query %}匹配用户数{% else %}用户数{% endif %}</span>
+    <strong>{{ users|length }}</strong>
+  </div>
+  <div>
+    <span>记录数</span>
+    <strong>
+      {% set total_entries = namespace(value=0) %}
+      {% for user in users %}
+        {% set total_entries.value = total_entries.value + user["entry_count"] %}
+      {% endfor %}
+      {{ total_entries.value }}
+    </strong>
+  </div>
+</section>
+
+<section class="admin-user-panel" aria-label="用户列表">
+  <div class="admin-user-list">
+    {% if users %}
+      {% for user in users %}
+        <a class="admin-user-row" href="{{ url_for('admin_user_detail', user_id=user['id']) }}">
+          <div class="admin-user-identity">
+            <div class="admin-user-name-line">
+              <strong>{{ user["real_name"] }}</strong>
+              <span>@{{ user["nickname"] }}</span>
+              <span>{{ user["grade"] or "未设置年级" }}</span>
+              <span>{{ user["program"] or "未设置项目" }}</span>
+            </div>
+            {% if user["is_admin"] %}
+              <span class="admin-badge">管理员</span>
+            {% endif %}
+          </div>
+          <div class="admin-user-row-meta">
+            <span>{{ user["entry_count"] }} 条记录</span>
+            <span>最近：{{ user["latest_entry_at"] | datetime_cn or "暂无" }}</span>
+          </div>
+        </a>
+      {% endfor %}
+    {% else %}
+      <p class="muted">
+        {% if search_query %}
+          没有找到匹配的用户。
+        {% else %}
+          暂无用户。
+        {% endif %}
+      </p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

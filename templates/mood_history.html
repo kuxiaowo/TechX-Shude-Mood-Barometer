@@ -1,0 +1,44 @@
+{% extends "dashboard.html" %}
+
+{% block title %}历史记录 - 学生心情晴雨表{% endblock %}
+{% block content_card_class %}adaptive-scroll-card{% endblock %}
+
+{% block content %}
+<section class="page-heading history-heading">
+  <div>
+    <p class="eyebrow">历史记录</p>
+    <h1>全部心情记录</h1>
+  </div>
+  <a class="outline-button history-calendar-link" href="{{ url_for('mood_calendar') }}">返回日历</a>
+</section>
+
+<section class="history-entry-list" aria-label="全部心情记录">
+  {% if entries %}
+    {% for entry in entries %}
+      <article class="history-entry" id="entry-{{ entry['id'] }}">
+        <div class="admin-entry-heading">
+          <span class="recent-emoji">
+            <span class="emoji-glyph">{{ entry["mood_emoji"] }}</span>
+          </span>
+          <div>
+            <strong>{{ entry["entry_date"] }}</strong>
+            <span class="admin-entry-time">{{ entry["created_at"] | datetime_cn }}</span>
+          </div>
+        </div>
+        <div class="reason-parts">
+          {% for part in entry["reason"] | mood_reason_parts %}
+            <section class="reason-part">
+              {% if part.question %}
+                <span class="reason-question">{{ part.question }}</span>
+              {% endif %}
+              <p class="reason-answer">{{ part.answer }}</p>
+            </section>
+          {% endfor %}
+        </div>
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">还没有心情记录。</p>
+  {% endif %}
+</section>
+{% endblock %}
