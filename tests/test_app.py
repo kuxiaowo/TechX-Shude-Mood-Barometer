@@ -571,14 +571,15 @@ def test_init_script_creates_systemd_service_from_env_example():
     assert "MOOD_ADMIN_PASSWORD" in script
     assert "MOOD_SERVICE_NAME" in script
     assert "MOOD_PORT" in script
-    assert "import main" in script
+    assert "importlib.util.spec_from_file_location" in script
     assert "main.create_app()" not in script
-    assert "app = main.app" in script
-    assert "main.init_db(app)" in script
-    assert "main.generate_password_hash(password)" in script
+    assert "mood.init_db(mood.app)" in script
+    assert "mood.generate_password_hash(password)" in script
     assert "hashlib.pbkdf2_hmac" not in script
     assert "systemd/user" in script
-    assert "ExecStart=/usr/bin/env python3 -m uvicorn main:app" in script
+    assert "ExecStart=/usr/bin/env python3 $APP_DIR/main.py" in script
+    assert "Environment=PORT" not in script
+    assert "EnvironmentFile" not in script
     assert "systemctl --user daemon-reload" in script
     assert 'systemctl --user enable "$SERVICE_NAME"' in script
     assert 'exec "$ROOT_DIR/deploy-first-run.sh" "$@"' in wrapper
@@ -586,7 +587,10 @@ def test_init_script_creates_systemd_service_from_env_example():
     assert "INSTALL_SYSTEMD_SERVICE" not in env_example
     assert "SYSTEMD_SERVICE_NAME" not in env_example
     assert "APP_HOST" not in env_example
-    assert "PORT=5000" in env_example
+    assert "MOOD_HOST=127.0.0.1" in env_example
+    assert "MOOD_PORT=5000" in env_example
+    assert "MOOD_SECRET_KEY=replace-with-a-random-secret-key" in env_example
+    assert "MOOD_ADMIN_NICKNAME=admin" in env_example
 
 
 def test_mood_report_requires_emoji_and_required_questions(client):

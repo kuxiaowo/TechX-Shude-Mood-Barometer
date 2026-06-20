@@ -70,9 +70,9 @@ _USER_NOT_LOADED = object()
 def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     app = FastAPI()
     config = {
-        "SECRET_KEY": os.environ.get("SECRET_KEY", "dev-secret-key-change-me"),
+        "SECRET_KEY": os.environ.get("MOOD_SECRET_KEY", "dev-secret-key-change-me"),
         "DATABASE": os.environ.get("MOOD_DB_PATH", str(DEFAULT_DATABASE)),
-        "ADMIN_NICKNAME": os.environ.get("ADMIN_NICKNAME", "").strip(),
+        "ADMIN_NICKNAME": os.environ.get("MOOD_ADMIN_NICKNAME", "").strip(),
     }
 
     if test_config:
@@ -918,9 +918,10 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5000"))
+    host = os.environ.get("MOOD_HOST", "127.0.0.1")
+    port = int(os.environ.get("MOOD_PORT", "5000"))
     reload = os.environ.get("FASTAPI_RELOAD") == "1"
     if reload:
-        uvicorn.run("main:app", host="127.0.0.1", port=port, reload=True)
+        uvicorn.run("main:app", host=host, port=port, reload=True)
     else:
-        uvicorn.run(app, host="127.0.0.1", port=port)
+        uvicorn.run(app, host=host, port=port)

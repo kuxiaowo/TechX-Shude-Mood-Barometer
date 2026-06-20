@@ -24,7 +24,7 @@ TechX Shude Mood Barometer 第一次部署脚本
   MOOD_ADMIN_NAME       预创建管理员姓名，默认同昵称
   MOOD_ADMIN_PASSWORD   预创建管理员密码；为空则不创建管理员
   MOOD_SERVICE_NAME     systemd 服务名，默认 techx-shude-mood-barometer.service
-  MOOD_PORT             服务端口，默认 5000
+  MOOD_PORT             仅用于脚本输出提示；实际监听端口由 .env、外部环境变量或程序默认值决定
 
 示例：
   chmod +x deploy-first-run.sh
@@ -32,8 +32,8 @@ TechX Shude Mood Barometer 第一次部署脚本
 
 说明：
   - 数据库使用 SQLite，默认文件位于 ./data/mood_barometer.sqlite3
-  - 如果存在 .env，应用会按项目代码读取其中的 SECRET_KEY、MOOD_DB_PATH 等配置
-  - 脚本使用当前 PATH 中的 python3；请先自行切换到你要用的运行环境
+  - 不需要安装 MySQL/PostgreSQL
+  - Python 的 sqlite3 模块随 Python 标准库提供
 EOF
 }
 
@@ -76,7 +76,7 @@ log "应用目录: $APP_DIR"
 cd "$APP_DIR"
 
 if [[ ! -f main.py || ! -d templates || ! -d static ]]; then
-  echo "当前目录缺少 main.py、templates 或 static，请在项目根目录运行。" >&2
+  echo "当前目录缺少 main.py、templates 或 static，请在解压后的项目根目录内运行。" >&2
   exit 1
 fi
 
@@ -85,44 +85,43 @@ mkdir -p "$APP_DIR/data"
 chmod 700 "$APP_DIR/data"
 
 python3 - <<'PY'
-from __future__ import annotations
-
+import importlib.util
 import os
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
-import main
+app_dir = Path.cwd()
+spec = importlib.util.spec_from_file_location('mood_app', app_dir / 'main.py')
+mood = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mood)
+mood.init_db(mood.app)
+db_path = mood.database_path(mood.app)
 
-app = main.app
-main.init_db(app)
-db_path = main.database_path(app)
-
-nickname = os.environ.get("MOOD_ADMIN_NICKNAME", "").strip()
-password = os.environ.get("MOOD_ADMIN_PASSWORD", "")
-name = os.environ.get("MOOD_ADMIN_NAME", "").strip() or nickname
+nickname = os.environ.get('MOOD_ADMIN_NICKNAME', '').strip()
+password = os.environ.get('MOOD_ADMIN_PASSWORD', '')
+name = os.environ.get('MOOD_ADMIN_NAME', '').strip() or nickname
 
 if nickname and password:
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id FROM users WHERE lower(nickname) = lower(?)",
+            'SELECT id FROM users WHERE lower(nickname) = lower(?)',
             (nickname,),
         ).fetchone()
-        password_hash = main.generate_password_hash(password)
+        password_hash = mood.generate_password_hash(password)
         if row:
             conn.execute(
                 """
                 UPDATE users
                 SET real_name = ?,
-                    grade = '',
-                    program = '',
-                    is_admin = 1,
-                    password_hash = ?
+                    password_hash = ?,
+                    is_admin = 1
                 WHERE id = ?
                 """,
-                (name, password_hash, row["id"]),
+                (name, password_hash, row['id']),
             )
-            action = "updated"
+            action = 'updated'
         else:
             conn.execute(
                 """
@@ -134,23 +133,23 @@ if nickname and password:
                     name,
                     nickname,
                     password_hash,
-                    datetime.now().isoformat(timespec="seconds"),
+                    datetime.now().isoformat(timespec='seconds'),
                 ),
             )
-            action = "created"
+            action = 'created'
         conn.commit()
-    print(f"admin {action}: {nickname}")
+    print(f'admin {action}: {nickname}')
 elif nickname or password:
-    raise SystemExit("MOOD_ADMIN_NICKNAME 和 MOOD_ADMIN_PASSWORD 需要同时设置。")
+    raise SystemExit('MOOD_ADMIN_NICKNAME 和 MOOD_ADMIN_PASSWORD 需要同时设置。')
 else:
-    print("admin skipped: 可在网页里注册第一个账号，或设置 MOOD_ADMIN_NICKNAME/MOOD_ADMIN_PASSWORD。")
+    print('admin skipped: 可在网页里注册第一个账号。')
 
-print(f"database ready: {db_path}")
+print(f'database ready: {db_path}')
 PY
 
 if [[ "$INSTALL_SYSTEMD" == "1" ]]; then
   if ! command -v systemctl >/dev/null 2>&1; then
-    echo "未找到 systemctl，已完成数据库初始化；可手动运行: python3 -m uvicorn main:app --host 127.0.0.1 --port ${PORT}" >&2
+    echo "未找到 systemctl，已完成数据库初始化；请用 python3 main.py 手动运行。" >&2
     exit 0
   fi
 
@@ -166,9 +165,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=$APP_DIR
-EnvironmentFile=-$APP_DIR/.env
-Environment=PORT=$PORT
-ExecStart=/usr/bin/env python3 -m uvicorn main:app --host 127.0.0.1 --port $PORT
+ExecStart=/usr/bin/env python3 $APP_DIR/main.py
 Restart=always
 RestartSec=3
 
