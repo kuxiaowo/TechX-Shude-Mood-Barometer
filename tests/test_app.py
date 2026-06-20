@@ -544,6 +544,11 @@ def test_scroll_lists_adapt_to_available_card_height_and_calendar_links_have_no_
     assert "max-height: none;" in admin_list_rule
     assert "overflow-y: auto;" in admin_list_rule
 
+    admin_name_rule_start = styles.index(".admin-user-name-line strong {")
+    admin_name_rule_end = styles.index("}", admin_name_rule_start)
+    admin_name_rule = styles[admin_name_rule_start:admin_name_rule_end]
+    assert "flex: 0 0 auto;" in admin_name_rule
+
     calendar_hover_start = styles.index(".day-cell.has-entry:hover {")
     calendar_hover_end = styles.index("}", calendar_hover_start)
     calendar_hover_rule = styles[calendar_hover_start:calendar_hover_end]

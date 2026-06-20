@@ -916,6 +916,8 @@ textarea:focus {
 }
 
 .admin-user-name-line strong {
+  flex: 0 0 auto;
+  max-width: 140px;
   overflow: hidden;
   font-size: 16px;
   text-overflow: ellipsis;
@@ -923,6 +925,7 @@ textarea:focus {
 
 .admin-user-name-line span,
 .admin-user-row-meta span {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
