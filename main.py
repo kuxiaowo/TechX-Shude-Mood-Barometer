@@ -727,6 +727,32 @@ def register_routes(app: FastAPI) -> None:
             },
         )
 
+    @app.post("/admin/users/{user_id}/admin", name="promote_admin")
+    async def promote_admin(request: Request, user_id: int):
+        user = require_admin(request)
+        if isinstance(user, RedirectResponse):
+            return user
+
+        target_user = get_db(request).execute(
+            "SELECT id, nickname, is_admin FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if target_user is None:
+            flash(request, "没有找到这个用户。", "error")
+            return redirect_to(request, "admin_dashboard")
+
+        if target_user["is_admin"]:
+            flash(request, "这个用户已经是管理员。", "success")
+        else:
+            get_db(request).execute(
+                "UPDATE users SET is_admin = 1 WHERE id = ?",
+                (user_id,),
+            )
+            get_db(request).commit()
+            flash(request, f"已将 @{target_user['nickname']} 设置为管理员。", "success")
+
+        return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
+
 
 def is_valid_optional_choice(value: str, choices: tuple[str, ...]) -> bool:
     return value == "" or value in choices

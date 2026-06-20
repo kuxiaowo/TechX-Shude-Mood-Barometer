@@ -336,6 +336,64 @@ def test_non_admin_user_cannot_view_admin_dashboard(client):
     assert "用户列表" not in response.text
 
 
+def test_admin_can_promote_user_to_admin(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    register(client, nickname="student", real_name="李四")
+    client.post("/logout")
+
+    login(client, nickname="admin-user")
+    users = rows(app, "SELECT id, nickname, is_admin FROM users ORDER BY id")
+    student_id = users[1]["id"]
+
+    detail = client.get(f"/admin/users/{student_id}")
+    assert detail.status_code == 200
+    assert "设为管理员" in detail.text
+
+    response = client.post(
+        f"/admin/users/{student_id}/admin",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "已将 @student 设置为管理员" in response.text
+    assert "设为管理员" not in response.text
+    assert "管理员" in response.text
+
+    promoted = rows(
+        app,
+        "SELECT is_admin FROM users WHERE id = ?",
+        (student_id,),
+    )[0]
+    assert promoted["is_admin"] == 1
+
+    repeated = client.post(
+        f"/admin/users/{student_id}/admin",
+        follow_redirects=True,
+    )
+    assert repeated.status_code == 200
+    assert "这个用户已经是管理员" in repeated.text
+
+
+def test_non_admin_user_cannot_promote_users(app, client):
+    register(client, nickname="admin-user")
+    client.post("/logout")
+    register(client, nickname="student")
+    users = rows(app, "SELECT id, nickname, is_admin FROM users ORDER BY id")
+    admin_id = users[0]["id"]
+
+    response = client.post(
+        f"/admin/users/{admin_id}/admin",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "只有管理员可以访问后台" in response.text
+    assert rows(app, "SELECT is_admin FROM users WHERE nickname = 'student'")[0][
+        "is_admin"
+    ] == 0
+
+
 def test_update_nickname_success_and_duplicate(app, client):
     register(client)
 

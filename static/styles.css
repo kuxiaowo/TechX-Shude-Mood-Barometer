@@ -963,6 +963,14 @@ textarea:focus {
   color: var(--muted);
 }
 
+.admin-user-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .admin-badge {
   flex: 0 0 auto;
   border-radius: 999px;

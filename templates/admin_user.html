@@ -18,9 +18,15 @@
       <h2>@{{ target_user["nickname"] }}</h2>
       <p>{{ target_user["created_at"] | datetime_cn }} 注册</p>
     </div>
-    {% if target_user["is_admin"] %}
-      <span class="admin-badge">管理员</span>
-    {% endif %}
+    <div class="admin-user-header-actions">
+      {% if target_user["is_admin"] %}
+        <span class="admin-badge">管理员</span>
+      {% else %}
+        <form method="post" action="{{ url_for('promote_admin', user_id=target_user['id']) }}">
+          <button class="primary-button compact admin-user-action" type="submit">设为管理员</button>
+        </form>
+      {% endif %}
+    </div>
   </header>
 
   <dl class="admin-user-meta">
