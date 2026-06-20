@@ -67,18 +67,30 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import hashlib
+import secrets
 from datetime import datetime
 from pathlib import Path
-
-from werkzeug.security import generate_password_hash
 
 BASE_DIR = Path.cwd()
 GRADES = ("", "2024", "2025", "2026")
 PROGRAMS = ("", "AP", "IB")
+PASSWORD_HASH_ITERATIONS = 1_000_000
 
 
 def env_value(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
+
+
+def generate_password_hash(password: str) -> str:
+    salt = secrets.token_hex(16)
+    derived_key = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    )
+    return f"pbkdf2:sha256:{PASSWORD_HASH_ITERATIONS}${salt}${derived_key.hex()}"
 
 
 database_value = env_value("MOOD_DB_PATH", "data/mood_barometer.sqlite3")

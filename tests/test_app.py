@@ -563,6 +563,9 @@ def test_init_script_creates_systemd_service_from_env_example():
     assert "resolve_init_python" in script
     assert '"$(resolve_init_python)" - <<' in script
     assert "python - <<'PY'" not in script
+    assert "from werkzeug.security import generate_password_hash" not in script
+    assert "hashlib.pbkdf2_hmac" in script
+    assert "pbkdf2:sha256:" in script
     assert "/etc/systemd/system/$SYSTEMD_SERVICE_NAME.service" in script
     assert "ExecStart=$service_python -m uvicorn main:app" in script
     assert "systemctl daemon-reload" in script
