@@ -556,28 +556,36 @@ def test_scroll_lists_adapt_to_available_card_height_and_calendar_links_have_no_
 
 
 def test_init_script_creates_systemd_service_from_env_example():
-    script = Path("scripts/init_admin.sh").read_text(encoding="utf-8")
+    script = Path("deploy-first-run.sh").read_text(encoding="utf-8")
+    wrapper = Path("scripts/init_admin.sh").read_text(encoding="utf-8")
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
-    assert script.startswith("#!/usr/bin/env sh\nset -eu\n")
-    assert "pipefail" not in script
-    assert "BASH_SOURCE" not in script
+    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "BASH_SOURCE" in script
     assert "need_cmd python3" in script
     assert "python3 - <<'PY'" in script
-    assert "NO_SYSTEMD_ARG=0" in script
-    assert "NO_START_ARG=0" in script
-    assert "from werkzeug.security import generate_password_hash" not in script
-    assert "hashlib.pbkdf2_hmac" in script
-    assert "pbkdf2:sha256:" in script
+    assert "INSTALL_SYSTEMD=1" in script
+    assert "START_SERVICE=1" in script
+    assert "MOOD_ADMIN_NICKNAME" in script
+    assert "MOOD_ADMIN_NAME" in script
+    assert "MOOD_ADMIN_PASSWORD" in script
+    assert "MOOD_SERVICE_NAME" in script
+    assert "MOOD_PORT" in script
+    assert "import main" in script
+    assert "main.create_app()" not in script
+    assert "app = main.app" in script
+    assert "main.init_db(app)" in script
+    assert "main.generate_password_hash(password)" in script
+    assert "hashlib.pbkdf2_hmac" not in script
     assert "systemd/user" in script
-    assert "ExecStart=$PYTHON_BIN -m uvicorn main:app" in script
+    assert "ExecStart=/usr/bin/env python3 -m uvicorn main:app" in script
     assert "systemctl --user daemon-reload" in script
-    assert 'systemctl --user enable "$SYSTEMD_SERVICE_NAME"' in script
-    assert "SYSTEMD_START_NOW" in script
+    assert 'systemctl --user enable "$SERVICE_NAME"' in script
+    assert 'exec "$ROOT_DIR/deploy-first-run.sh" "$@"' in wrapper
 
-    assert "INSTALL_SYSTEMD_SERVICE=1" in env_example
-    assert "SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer.service" in env_example
-    assert "APP_HOST=127.0.0.1" in env_example
+    assert "INSTALL_SYSTEMD_SERVICE" not in env_example
+    assert "SYSTEMD_SERVICE_NAME" not in env_example
+    assert "APP_HOST" not in env_example
     assert "PORT=5000" in env_example
 
 
