@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}登录 - 学生心情晴雨表{% endblock %}
+{% block title %}登录 - TechX心情晴雨表{% endblock %}
 {% block body_class %}auth-page{% endblock %}
 
 {% block body %}
@@ -8,9 +8,8 @@
   <section class="auth-card">
     <div class="auth-visual" aria-hidden="true"></div>
     <div class="auth-panel">
-      <a class="brand" href="{{ url_for('login') }}">Mood Barometer</a>
+      <a class="brand" href="{{ url_for('login') }}"><span class="brand-techx">TechX</span>心情晴雨表</a>
       <div class="auth-heading">
-        <p class="eyebrow">学生每日心情收集</p>
         <h1>登录账户</h1>
       </div>
 

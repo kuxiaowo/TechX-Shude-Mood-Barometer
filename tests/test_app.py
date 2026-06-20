@@ -591,6 +591,21 @@ def test_scroll_lists_adapt_to_available_card_height_and_calendar_links_have_no_
     history_flex_rule = styles[history_flex_rule_start:history_flex_rule_end]
     assert "flex: 1 1 auto;" in history_flex_rule
 
+    recent_emoji_rule_start = styles.index(".recent-emoji {")
+    recent_emoji_rule_end = styles.index("}", recent_emoji_rule_start)
+    recent_emoji_rule = styles[recent_emoji_rule_start:recent_emoji_rule_end]
+    assert "place-items: center;" in recent_emoji_rule
+
+    emoji_glyph_rule_start = styles.index(".emoji-glyph {")
+    emoji_glyph_rule_end = styles.index("}", emoji_glyph_rule_start)
+    emoji_glyph_rule = styles[emoji_glyph_rule_start:emoji_glyph_rule_end]
+    assert "display: grid;" in emoji_glyph_rule
+    assert "width: 100%;" in emoji_glyph_rule
+    assert "height: 100%;" in emoji_glyph_rule
+    assert "place-items: center;" in emoji_glyph_rule
+    assert "transform: none;" in emoji_glyph_rule
+    assert "translate(" not in emoji_glyph_rule
+
     admin_panel_rule_start = styles.index(".admin-user-panel {")
     admin_panel_rule_end = styles.index("}", admin_panel_rule_start)
     admin_panel_rule = styles[admin_panel_rule_start:admin_panel_rule_end]
