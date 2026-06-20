@@ -57,14 +57,10 @@ PORT=8001 FASTAPI_RELOAD=1 python main.py
 初始化脚本会创建数据库表，并创建或更新 `.env` 中指定的管理员账号。
 
 ```bash
-bash scripts/init_admin.sh
+sh scripts/init_admin.sh
 ```
 
 默认情况下，脚本会用当前默认 `python3` 创建 Linux systemd 用户服务。请先激活你要使用的虚拟环境或 Conda 环境，再运行脚本。
-
-```bash
-bash scripts/init_admin.sh
-```
 
 只初始化数据库和管理员账号，不创建服务：
 

@@ -559,6 +559,9 @@ def test_init_script_creates_systemd_service_from_env_example():
     script = Path("scripts/init_admin.sh").read_text(encoding="utf-8")
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
+    assert script.startswith("#!/usr/bin/env sh\nset -eu\n")
+    assert "pipefail" not in script
+    assert "BASH_SOURCE" not in script
     assert "need_cmd python3" in script
     assert "python3 - <<'PY'" in script
     assert "NO_SYSTEMD_ARG=0" in script
