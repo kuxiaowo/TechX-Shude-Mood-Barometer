@@ -559,24 +559,23 @@ def test_init_script_creates_systemd_service_from_env_example():
     script = Path("scripts/init_admin.sh").read_text(encoding="utf-8")
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
-    assert "create_systemd_service" in script
-    assert "resolve_init_python" in script
-    assert '"$(resolve_init_python)" - <<' in script
-    assert "python - <<'PY'" not in script
+    assert "need_cmd python3" in script
+    assert "python3 - <<'PY'" in script
+    assert "NO_SYSTEMD_ARG=0" in script
+    assert "NO_START_ARG=0" in script
     assert "from werkzeug.security import generate_password_hash" not in script
     assert "hashlib.pbkdf2_hmac" in script
     assert "pbkdf2:sha256:" in script
-    assert "/etc/systemd/system/$SYSTEMD_SERVICE_NAME.service" in script
-    assert "ExecStart=$service_python -m uvicorn main:app" in script
-    assert "systemctl daemon-reload" in script
-    assert 'systemctl enable "$SYSTEMD_SERVICE_NAME"' in script
+    assert "systemd/user" in script
+    assert "ExecStart=$PYTHON_BIN -m uvicorn main:app" in script
+    assert "systemctl --user daemon-reload" in script
+    assert 'systemctl --user enable "$SYSTEMD_SERVICE_NAME"' in script
     assert "SYSTEMD_START_NOW" in script
 
     assert "INSTALL_SYSTEMD_SERVICE=1" in env_example
-    assert "SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer" in env_example
+    assert "SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer.service" in env_example
     assert "APP_HOST=127.0.0.1" in env_example
     assert "PORT=5000" in env_example
-    assert "INIT_PYTHON=" in env_example
 
 
 def test_mood_report_requires_emoji_and_required_questions(client):

@@ -57,13 +57,13 @@ PORT=8001 FASTAPI_RELOAD=1 python main.py
 初始化脚本会创建数据库表，并创建或更新 `.env` 中指定的管理员账号。
 
 ```bash
-sh scripts/init_admin.sh
+bash scripts/init_admin.sh
 ```
 
-默认情况下，脚本还会尝试创建 Linux systemd 自启服务。创建服务需要 root/sudo 权限：
+默认情况下，脚本会用当前默认 `python3` 创建 Linux systemd 用户服务。请先激活你要使用的虚拟环境或 Conda 环境，再运行脚本。
 
 ```bash
-sudo sh scripts/init_admin.sh
+bash scripts/init_admin.sh
 ```
 
 只初始化数据库和管理员账号，不创建服务：
@@ -77,27 +77,23 @@ INSTALL_SYSTEMD_SERVICE=0
 ```env
 APP_HOST=127.0.0.1
 PORT=5000
-SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer
-SYSTEMD_SERVICE_USER=
-INIT_PYTHON=
-SYSTEMD_PYTHON=
-SYSTEMD_START_NOW=0
+SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer.service
+SYSTEMD_START_NOW=1
 ```
 
 说明：
 
-- `SYSTEMD_SERVICE_USER` 为空时，脚本会优先使用 `SUDO_USER`，否则使用当前用户。
-- `INIT_PYTHON` 为空时，初始化脚本会优先使用 `.venv/bin/python`，否则查找 `python3` 或 `python`。
-- `SYSTEMD_PYTHON` 为空时，脚本会优先使用 `.venv/bin/python`，否则查找 `python3` 或 `python`。
+- 脚本使用当前 `PATH` 中的 `python3`，类似 `/usr/bin/env python3`。
 - `SYSTEMD_START_NOW=1` 会在创建服务后立即重启服务。
-- 服务文件路径为 `/etc/systemd/system/<SYSTEMD_SERVICE_NAME>.service`。
+- 服务文件路径为 `~/.config/systemd/user/<SYSTEMD_SERVICE_NAME>`。
+- 如果服务需要在退出 SSH 后继续运行，执行 `loginctl enable-linger $USER`。
 
 常用 systemd 命令：
 
 ```bash
-sudo systemctl status techx-shude-mood-barometer
-sudo systemctl restart techx-shude-mood-barometer
-sudo journalctl -u techx-shude-mood-barometer -f
+systemctl --user status techx-shude-mood-barometer.service
+systemctl --user restart techx-shude-mood-barometer.service
+journalctl --user -u techx-shude-mood-barometer.service -f
 ```
 
 ## 演示数据
@@ -156,10 +152,7 @@ python -m pytest -q --basetemp data/.pytest-tmp -p no:cacheprovider
 | `PORT` | 服务端口；`python main.py` 也会读取这个值。 |
 | `FASTAPI_RELOAD` | 设为 `1` 时，`python main.py` 使用 reload 模式。 |
 | `INSTALL_SYSTEMD_SERVICE` | `1` 创建 systemd 服务，`0` 跳过。 |
-| `SYSTEMD_SERVICE_NAME` | systemd 服务名。 |
-| `SYSTEMD_SERVICE_USER` | systemd 运行用户。 |
-| `INIT_PYTHON` | 初始化数据库和管理员账号时使用的 Python 解释器路径。 |
-| `SYSTEMD_PYTHON` | systemd 使用的 Python 解释器路径。 |
+| `SYSTEMD_SERVICE_NAME` | systemd 用户服务名。 |
 | `SYSTEMD_START_NOW` | `1` 表示创建服务后立即启动/重启。 |
 
 ## 路由概览

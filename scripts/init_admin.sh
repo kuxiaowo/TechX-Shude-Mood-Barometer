@@ -1,8 +1,70 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-"$ROOT_DIR/.env"}"
+INSTALL_SYSTEMD_SERVICE=1
+START_SERVICE=1
+NO_SYSTEMD_ARG=0
+NO_START_ARG=0
+
+usage() {
+  cat <<'EOF'
+TechX Shude Mood Barometer first-run script
+
+Usage:
+  scripts/init_admin.sh [options]
+
+Options:
+  --no-systemd   Initialize the database/admin account only.
+  --no-start     Create and enable the systemd user service, but do not start it.
+  -h, --help     Show this help message.
+
+Environment:
+  ENV_FILE                Env file path, default ./.env
+  SYSTEMD_SERVICE_NAME    systemd user service name, default techx-shude-mood-barometer.service
+  SYSTEMD_START_NOW       1 to start/restart after service creation, 0 to skip
+
+Notes:
+  - The script uses the current default python3 from PATH.
+  - Activate your virtualenv/conda env before running if the app dependencies live there.
+  - The SQLite database defaults to ./data/mood_barometer.sqlite3.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-systemd)
+      NO_SYSTEMD_ARG=1
+      ;;
+    --no-start)
+      NO_START_ARG=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+log() {
+  printf '[mood-barometer init] %s\n' "$*"
+}
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing command: $1" >&2
+    echo "Install python3 or activate the environment that provides python3." >&2
+    exit 1
+  fi
+}
+
 case "$ENV_FILE" in
   /*)
     ;;
@@ -17,6 +79,9 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+need_cmd python3
+PYTHON_BIN="$(command -v python3)"
+
 set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
@@ -25,50 +90,65 @@ set +a
 : "${ADMIN_NICKNAME:?ADMIN_NICKNAME is required in .env}"
 : "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required in .env}"
 
-INSTALL_SYSTEMD_SERVICE="${INSTALL_SYSTEMD_SERVICE:-1}"
-SYSTEMD_SERVICE_NAME="${SYSTEMD_SERVICE_NAME:-techx-shude-mood-barometer}"
-SYSTEMD_SERVICE_USER="${SYSTEMD_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
-SYSTEMD_START_NOW="${SYSTEMD_START_NOW:-0}"
+SYSTEMD_SERVICE_NAME="${SYSTEMD_SERVICE_NAME:-techx-shude-mood-barometer.service}"
+case "$SYSTEMD_SERVICE_NAME" in
+  *.service)
+    ;;
+  *)
+    SYSTEMD_SERVICE_NAME="$SYSTEMD_SERVICE_NAME.service"
+    ;;
+esac
+
+case "${INSTALL_SYSTEMD_SERVICE:-1}" in
+  1|true|TRUE|yes|YES)
+    ;;
+  0|false|FALSE|no|NO)
+    INSTALL_SYSTEMD_SERVICE=0
+    ;;
+  *)
+    echo "INSTALL_SYSTEMD_SERVICE must be 1 or 0." >&2
+    exit 1
+    ;;
+esac
+
+case "${SYSTEMD_START_NOW:-1}" in
+  1|true|TRUE|yes|YES)
+    ;;
+  0|false|FALSE|no|NO)
+    START_SERVICE=0
+    ;;
+  *)
+    echo "SYSTEMD_START_NOW must be 1 or 0." >&2
+    exit 1
+    ;;
+esac
+
+if [ "$NO_SYSTEMD_ARG" = "1" ]; then
+  INSTALL_SYSTEMD_SERVICE=0
+fi
+
+if [ "$NO_START_ARG" = "1" ]; then
+  START_SERVICE=0
+fi
+
 APP_HOST="${APP_HOST:-127.0.0.1}"
 PORT="${PORT:-5000}"
-INIT_PYTHON="${INIT_PYTHON:-}"
-SYSTEMD_PYTHON="${SYSTEMD_PYTHON:-}"
-
-resolve_init_python() {
-  if [ -n "$INIT_PYTHON" ]; then
-    printf '%s\n' "$INIT_PYTHON"
-    return
-  fi
-
-  if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
-    printf '%s\n' "$ROOT_DIR/.venv/bin/python"
-    return
-  fi
-
-  if command -v python3 >/dev/null 2>&1; then
-    command -v python3
-    return
-  fi
-
-  if command -v python >/dev/null 2>&1; then
-    command -v python
-    return
-  fi
-
-  echo "Python interpreter not found. Install python3 or set INIT_PYTHON in .env." >&2
-  exit 1
-}
 
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT_DIR"
 
-"$(resolve_init_python)" - <<'PY'
+log "Using python: $PYTHON_BIN"
+log "App directory: $ROOT_DIR"
+mkdir -p "$ROOT_DIR/data"
+chmod 700 "$ROOT_DIR/data"
+
+python3 - <<'PY'
 from __future__ import annotations
 
-import os
-import sqlite3
 import hashlib
+import os
 import secrets
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -205,94 +285,52 @@ print(f"Database initialized: {database_path}")
 print(f"Admin account {action}: {admin_nickname}")
 PY
 
-resolve_service_python() {
-  if [ -n "$SYSTEMD_PYTHON" ]; then
-    printf '%s\n' "$SYSTEMD_PYTHON"
-    return
-  fi
-
-  if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
-    printf '%s\n' "$ROOT_DIR/.venv/bin/python"
-    return
-  fi
-
-  if command -v python3 >/dev/null 2>&1; then
-    command -v python3
-    return
-  fi
-
-  command -v python
-}
-
-create_systemd_service() {
-  case "$INSTALL_SYSTEMD_SERVICE" in
-    1|true|TRUE|yes|YES)
-      ;;
-    0|false|FALSE|no|NO)
-      echo "Systemd service creation skipped: INSTALL_SYSTEMD_SERVICE=$INSTALL_SYSTEMD_SERVICE"
-      return
-      ;;
-    *)
-      echo "INSTALL_SYSTEMD_SERVICE must be 1 or 0." >&2
-      exit 1
-      ;;
-  esac
-
-  case "$SYSTEMD_SERVICE_NAME" in
-    ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.@-]*)
-      echo "SYSTEMD_SERVICE_NAME contains invalid characters." >&2
-      exit 1
-      ;;
-  esac
-
+if [ "$INSTALL_SYSTEMD_SERVICE" = "1" ]; then
   if ! command -v systemctl >/dev/null 2>&1; then
-    echo "systemctl is required to create the auto-start service." >&2
-    echo "Set INSTALL_SYSTEMD_SERVICE=0 in .env to only initialize the database/admin account." >&2
-    exit 1
+    echo "systemctl not found; database/admin initialization is complete." >&2
+    exit 0
   fi
 
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "Creating a systemd service requires root." >&2
-    echo "Re-run with sudo, or set INSTALL_SYSTEMD_SERVICE=0 in .env to skip service creation." >&2
-    exit 1
-  fi
+  SERVICE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  SERVICE_FILE="$SERVICE_DIR/$SYSTEMD_SERVICE_NAME"
+  mkdir -p "$SERVICE_DIR"
 
-  service_python="$(resolve_service_python)"
-  service_file="/etc/systemd/system/$SYSTEMD_SERVICE_NAME.service"
-  tmp_file="$(mktemp)"
-
-  cat > "$tmp_file" <<SERVICE
+  log "Writing systemd user service: $SERVICE_FILE"
+  cat > "$SERVICE_FILE" <<SERVICE
 [Unit]
 Description=TechX Shude Mood Barometer
 After=network.target
 
 [Service]
 Type=simple
-User=$SYSTEMD_SERVICE_USER
 WorkingDirectory=$ROOT_DIR
 Environment=APP_HOST=$APP_HOST
 Environment=PORT=$PORT
 Environment=PYTHONPATH=$ROOT_DIR
 EnvironmentFile=$ENV_FILE
-ExecStart=$service_python -m uvicorn main:app --host \${APP_HOST} --port \${PORT}
+ExecStart=$PYTHON_BIN -m uvicorn main:app --host $APP_HOST --port $PORT
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 SERVICE
 
-  install -m 0644 "$tmp_file" "$service_file"
-  rm -f "$tmp_file"
-  systemctl daemon-reload
-  systemctl enable "$SYSTEMD_SERVICE_NAME"
+  systemctl --user daemon-reload
+  systemctl --user enable "$SYSTEMD_SERVICE_NAME"
 
-  if [ "$SYSTEMD_START_NOW" = "1" ]; then
-    systemctl restart "$SYSTEMD_SERVICE_NAME"
+  if [ "$START_SERVICE" = "1" ]; then
+    systemctl --user restart "$SYSTEMD_SERVICE_NAME"
+    log "Service status: $(systemctl --user is-active "$SYSTEMD_SERVICE_NAME")"
+  else
+    log "Service created and enabled, but not started."
   fi
 
-  echo "Systemd service installed: $service_file"
-  echo "Service enabled: $SYSTEMD_SERVICE_NAME"
-}
+  if command -v loginctl >/dev/null 2>&1; then
+    log "To keep the user service running after SSH logout, run: loginctl enable-linger $USER"
+  fi
+else
+  log "Skipped systemd service creation."
+fi
 
-create_systemd_service
+log "Initialization complete."
