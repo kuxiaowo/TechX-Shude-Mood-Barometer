@@ -31,12 +31,38 @@ SYSTEMD_SERVICE_USER="${SYSTEMD_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
 SYSTEMD_START_NOW="${SYSTEMD_START_NOW:-0}"
 APP_HOST="${APP_HOST:-127.0.0.1}"
 PORT="${PORT:-5000}"
+INIT_PYTHON="${INIT_PYTHON:-}"
 SYSTEMD_PYTHON="${SYSTEMD_PYTHON:-}"
+
+resolve_init_python() {
+  if [ -n "$INIT_PYTHON" ]; then
+    printf '%s\n' "$INIT_PYTHON"
+    return
+  fi
+
+  if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    printf '%s\n' "$ROOT_DIR/.venv/bin/python"
+    return
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return
+  fi
+
+  echo "Python interpreter not found. Install python3 or set INIT_PYTHON in .env." >&2
+  exit 1
+}
 
 export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT_DIR"
 
-python - <<'PY'
+"$(resolve_init_python)" - <<'PY'
 from __future__ import annotations
 
 import os

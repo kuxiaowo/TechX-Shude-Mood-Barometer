@@ -79,6 +79,7 @@ APP_HOST=127.0.0.1
 PORT=5000
 SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer
 SYSTEMD_SERVICE_USER=
+INIT_PYTHON=
 SYSTEMD_PYTHON=
 SYSTEMD_START_NOW=0
 ```
@@ -86,6 +87,7 @@ SYSTEMD_START_NOW=0
 说明：
 
 - `SYSTEMD_SERVICE_USER` 为空时，脚本会优先使用 `SUDO_USER`，否则使用当前用户。
+- `INIT_PYTHON` 为空时，初始化脚本会优先使用 `.venv/bin/python`，否则查找 `python3` 或 `python`。
 - `SYSTEMD_PYTHON` 为空时，脚本会优先使用 `.venv/bin/python`，否则查找 `python3` 或 `python`。
 - `SYSTEMD_START_NOW=1` 会在创建服务后立即重启服务。
 - 服务文件路径为 `/etc/systemd/system/<SYSTEMD_SERVICE_NAME>.service`。
@@ -156,6 +158,7 @@ python -m pytest -q --basetemp data/.pytest-tmp -p no:cacheprovider
 | `INSTALL_SYSTEMD_SERVICE` | `1` 创建 systemd 服务，`0` 跳过。 |
 | `SYSTEMD_SERVICE_NAME` | systemd 服务名。 |
 | `SYSTEMD_SERVICE_USER` | systemd 运行用户。 |
+| `INIT_PYTHON` | 初始化数据库和管理员账号时使用的 Python 解释器路径。 |
 | `SYSTEMD_PYTHON` | systemd 使用的 Python 解释器路径。 |
 | `SYSTEMD_START_NOW` | `1` 表示创建服务后立即启动/重启。 |
 

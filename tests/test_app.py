@@ -560,6 +560,9 @@ def test_init_script_creates_systemd_service_from_env_example():
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
     assert "create_systemd_service" in script
+    assert "resolve_init_python" in script
+    assert '"$(resolve_init_python)" - <<' in script
+    assert "python - <<'PY'" not in script
     assert "/etc/systemd/system/$SYSTEMD_SERVICE_NAME.service" in script
     assert "ExecStart=$service_python -m uvicorn main:app" in script
     assert "systemctl daemon-reload" in script
@@ -570,6 +573,7 @@ def test_init_script_creates_systemd_service_from_env_example():
     assert "SYSTEMD_SERVICE_NAME=techx-shude-mood-barometer" in env_example
     assert "APP_HOST=127.0.0.1" in env_example
     assert "PORT=5000" in env_example
+    assert "INIT_PYTHON=" in env_example
 
 
 def test_mood_report_requires_emoji_and_required_questions(client):
