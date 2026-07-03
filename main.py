@@ -136,6 +136,7 @@ def init_db(app: FastAPI) -> None:
                 grade TEXT NOT NULL DEFAULT '',
                 program TEXT NOT NULL DEFAULT '',
                 is_admin INTEGER NOT NULL DEFAULT 0,
+                privacy_consent_at TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
@@ -169,6 +170,10 @@ def ensure_user_profile_columns(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE users ADD COLUMN program TEXT NOT NULL DEFAULT ''")
     if "is_admin" not in columns:
         db.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+    if "privacy_consent_at" not in columns:
+        db.execute(
+            "ALTER TABLE users ADD COLUMN privacy_consent_at TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def promote_configured_admin(db: sqlite3.Connection, nickname: str | None) -> None:
@@ -194,7 +199,15 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
 
     request.state.user = get_db(request).execute(
         """
-        SELECT id, real_name, nickname, grade, program, is_admin, created_at
+        SELECT
+            id,
+            real_name,
+            nickname,
+            grade,
+            program,
+            is_admin,
+            privacy_consent_at,
+            created_at
         FROM users
         WHERE id = ?
         """,
@@ -379,9 +392,18 @@ def register_routes(app: FastAPI) -> None:
             grade = str(form.get("grade", "")).strip()
             program = str(form.get("program", "")).strip()
             password = str(form.get("password", ""))
+            privacy_consent = form.get("privacy_consent") == "yes"
 
             if not real_name or not nickname or not password:
                 flash(request, "姓名、昵称和密码都需要填写。", "error")
+                return render_template(request, "register.html")
+
+            if not privacy_consent:
+                flash(
+                    request,
+                    "\u8bf7\u5148\u52fe\u9009\u9690\u79c1\u89c4\u5219\u540c\u610f\u9879\u3002",
+                    "error",
+                )
                 return render_template(request, "register.html")
 
             if not is_valid_optional_choice(grade, GRADES) or not is_valid_optional_choice(
@@ -400,6 +422,7 @@ def register_routes(app: FastAPI) -> None:
                     request.app.state.config.get("ADMIN_NICKNAME") or ""
                 ).strip()
                 is_admin = int(user_count == 0 or nickname == configured_admin)
+                created_at = datetime.now().isoformat(timespec="seconds")
                 db.execute(
                     """
                     INSERT INTO users
@@ -409,10 +432,11 @@ def register_routes(app: FastAPI) -> None:
                             grade,
                             program,
                             is_admin,
+                            privacy_consent_at,
                             password_hash,
                             created_at
                         )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         real_name,
@@ -420,8 +444,9 @@ def register_routes(app: FastAPI) -> None:
                         grade,
                         program,
                         is_admin,
+                        created_at,
                         generate_password_hash(password),
-                        datetime.now().isoformat(timespec="seconds"),
+                        created_at,
                     ),
                 )
                 db.commit()
@@ -473,6 +498,38 @@ def register_routes(app: FastAPI) -> None:
     async def logout(request: Request):
         request.session.clear()
         return redirect_to(request, "login")
+
+    @app.post("/privacy-consent", name="accept_privacy_consent")
+    async def accept_privacy_consent(request: Request):
+        user = require_user(request)
+        if isinstance(user, RedirectResponse):
+            return user
+
+        form = await request.form()
+        next_url = str(form.get("next", "")).strip()
+        if not next_url.startswith("/") or next_url.startswith("//"):
+            next_url = url_path_for(request, "profile")
+
+        if form.get("privacy_consent") != "yes":
+            flash(
+                request,
+                "\u8bf7\u5148\u52fe\u9009\u9690\u79c1\u89c4\u5219\u540c\u610f\u9879\u3002",
+                "error",
+            )
+            return RedirectResponse(url=next_url, status_code=302)
+
+        get_db(request).execute(
+            "UPDATE users SET privacy_consent_at = ? WHERE id = ?",
+            (datetime.now().isoformat(timespec="seconds"), user["id"]),
+        )
+        get_db(request).commit()
+        request.state.user = None
+        flash(
+            request,
+            "\u5df2\u8bb0\u5f55\u9690\u79c1\u89c4\u5219\u540c\u610f\u72b6\u6001\u3002",
+            "success",
+        )
+        return RedirectResponse(url=next_url, status_code=302)
 
     @app.get("/profile", name="profile")
     async def profile(request: Request):

@@ -16,7 +16,13 @@
 
       {% include "_flash.html" %}
 
-      <form class="form-stack" method="post" action="{{ url_for('register') }}">
+      <form
+        class="form-stack"
+        id="register-form"
+        method="post"
+        action="{{ url_for('register') }}"
+        data-consent-dialog="register-privacy-consent-dialog"
+      >
         <label>
           <span>姓名</span>
           <input name="real_name" autocomplete="name" required>
@@ -47,6 +53,7 @@
           <span>密码</span>
           <input name="password" type="password" autocomplete="new-password" required>
         </label>
+        <input name="privacy_consent" type="hidden" value="">
         <button class="primary-button" type="submit">注册并进入</button>
       </form>
 
@@ -54,4 +61,32 @@
     </div>
   </section>
 </main>
+
+<dialog
+  class="modal consent-modal"
+  id="register-privacy-consent-dialog"
+  aria-labelledby="register-privacy-consent-title"
+>
+  <div class="modal-header">
+    <h2 id="register-privacy-consent-title">&#38544;&#31169;&#35268;&#21017;&#30830;&#35748;</h2>
+    <button class="modal-close" type="button" data-modal-close aria-label="&#20851;&#38381;">&#215;</button>
+  </div>
+  <div class="settings-form modal-form">
+    {% include "_privacy_consent_notice.html" %}
+    <label class="consent-check">
+      <input name="privacy_consent" type="checkbox" value="yes" required>
+      <span>&#25105;&#24050;&#30693;&#24713;&#24182;&#21516;&#24847;</span>
+    </label>
+    <div class="modal-actions">
+      <button class="ghost-button compact-action" type="button" data-modal-close>&#21462;&#28040;</button>
+      <button
+        class="primary-button compact"
+        type="button"
+        data-consent-confirm="register-form"
+      >
+        &#21516;&#24847;&#24182;&#27880;&#20876;
+      </button>
+    </div>
+  </div>
+</dialog>
 {% endblock %}

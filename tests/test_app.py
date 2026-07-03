@@ -42,6 +42,7 @@ def register(
             "grade": grade,
             "program": program,
             "password": password,
+            "privacy_consent": "yes",
         },
         follow_redirects=True,
     )
@@ -59,6 +60,12 @@ def rows(app, sql, params=()):
     with sqlite3.connect(app.state.config["DATABASE"]) as db:
         db.row_factory = sqlite3.Row
         return db.execute(sql, params).fetchall()
+
+
+def execute(app, sql, params=()):
+    with sqlite3.connect(app.state.config["DATABASE"]) as db:
+        db.execute(sql, params)
+        db.commit()
 
 
 def calendar_grid(html):
@@ -81,10 +88,14 @@ def test_register_success_and_password_hash(app, client):
     assert "2024" in response.text
     assert "AP" in response.text
 
-    users = rows(app, "SELECT nickname, grade, program, password_hash FROM users")
+    users = rows(
+        app,
+        "SELECT nickname, grade, program, privacy_consent_at, password_hash FROM users",
+    )
     assert users[0]["nickname"] == "sunny"
     assert users[0]["grade"] == "2024"
     assert users[0]["program"] == "AP"
+    assert users[0]["privacy_consent_at"]
     assert users[0]["password_hash"] != "pw"
 
 
@@ -95,6 +106,19 @@ def test_grade_options_display_class_suffix(client):
     register(client)
     profile_page = client.get("/profile")
     assert "2024\u7ea7" in profile_page.text
+
+
+def test_register_privacy_consent_uses_modal_without_expanding_form(client):
+    response = client.get("/register")
+    form_start = response.text.index('<form')
+    form_end = response.text.index("</form>", form_start)
+    form_html = response.text[form_start:form_end]
+
+    assert 'data-consent-dialog="register-privacy-consent-dialog"' in form_html
+    assert 'input name="privacy_consent" type="hidden"' in form_html
+    assert "consent-notice" not in form_html
+    assert 'type="checkbox"' not in form_html
+    assert 'id="register-privacy-consent-dialog"' in response.text
 
 
 def test_register_rejects_duplicate_and_empty_fields(client):
@@ -116,6 +140,24 @@ def test_register_rejects_duplicate_and_empty_fields(client):
         follow_redirects=True,
     )
     assert "都需要填写" in empty.text
+
+
+def test_register_requires_privacy_consent(app, client):
+    response = client.post(
+        "/register",
+        data={
+            "real_name": "student",
+            "nickname": "student",
+            "grade": "2024",
+            "program": "AP",
+            "password": "pw",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert 'name="privacy_consent"' in response.text
+    assert rows(app, "SELECT COUNT(*) AS count FROM users")[0]["count"] == 0
 
 
 def test_register_rejects_invalid_grade_and_program(client):
@@ -159,6 +201,7 @@ def test_existing_users_table_gets_grade_and_program_columns(tmp_path):
     assert "grade" in columns
     assert "program" in columns
     assert "is_admin" in columns
+    assert "privacy_consent_at" in columns
 
 
 def test_configured_admin_nickname_promotes_existing_user(tmp_path):
@@ -223,6 +266,42 @@ def test_login_ignores_external_next_url(client):
 
     assert response.status_code == 302
     assert response.headers["Location"] == "/profile"
+
+
+def test_existing_user_without_privacy_consent_gets_login_modal(app, client):
+    register(client)
+    execute(
+        app,
+        "UPDATE users SET privacy_consent_at = '' WHERE nickname = ?",
+        ("sunny",),
+    )
+    client.post("/logout")
+
+    response = login(client)
+
+    assert response.status_code == 200
+    assert 'id="privacy-consent-dialog"' in response.text
+    assert 'action="/privacy-consent"' in response.text
+
+    denied = client.post(
+        "/privacy-consent",
+        data={"next": "/profile"},
+        follow_redirects=True,
+    )
+    assert 'id="privacy-consent-dialog"' in denied.text
+    assert rows(app, "SELECT privacy_consent_at FROM users")[0][
+        "privacy_consent_at"
+    ] == ""
+
+    accepted = client.post(
+        "/privacy-consent",
+        data={"privacy_consent": "yes", "next": "/profile"},
+        follow_redirects=True,
+    )
+    assert 'id="privacy-consent-dialog"' not in accepted.text
+    assert rows(app, "SELECT privacy_consent_at FROM users")[0][
+        "privacy_consent_at"
+    ]
 
 
 @pytest.mark.parametrize(

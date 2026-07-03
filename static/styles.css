@@ -250,6 +250,44 @@ textarea:focus {
   text-align: center;
 }
 
+.consent-notice {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d6e6f5;
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: #344054;
+  background: #f7fbff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.consent-notice p {
+  margin: 0;
+}
+
+.form-stack label.consent-check,
+.settings-form label.consent-check,
+.consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #222833;
+  font-weight: 800;
+}
+
+.consent-check input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 3px;
+  accent-color: var(--blue-700);
+}
+
+.consent-modal {
+  width: min(560px, calc(100% - 32px));
+}
+
 .flash-list {
   display: grid;
   gap: 10px;

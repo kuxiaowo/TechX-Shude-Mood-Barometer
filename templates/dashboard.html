@@ -86,4 +86,29 @@
     </div>
   </aside>
 </div>
+
+{% if current_user and not current_user["privacy_consent_at"] %}
+  <dialog
+    class="modal consent-modal"
+    id="privacy-consent-dialog"
+    data-auto-show-modal
+    data-required-modal
+    aria-labelledby="privacy-consent-title"
+  >
+    <div class="modal-header">
+      <h2 id="privacy-consent-title">&#38544;&#31169;&#35268;&#21017;&#30830;&#35748;</h2>
+    </div>
+    <form class="settings-form modal-form" method="post" action="{{ url_for('accept_privacy_consent') }}">
+      {% include "_privacy_consent_notice.html" %}
+      <label class="consent-check">
+        <input name="privacy_consent" type="checkbox" value="yes" required autofocus>
+        <span>&#25105;&#24050;&#30693;&#24713;&#24182;&#21516;&#24847;</span>
+      </label>
+      <input type="hidden" name="next" value="{{ request.url.path }}">
+      <div class="modal-actions">
+        <button class="primary-button compact" type="submit">&#30830;&#35748;&#24182;&#32487;&#32493;</button>
+      </div>
+    </form>
+  </dialog>
+{% endif %}
 {% endblock %}
