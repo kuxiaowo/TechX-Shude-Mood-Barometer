@@ -108,6 +108,16 @@ def test_grade_options_display_class_suffix(client):
     assert "2024\u7ea7" in profile_page.text
 
 
+def test_auth_pages_use_background_folder(client):
+    login_page = client.get("/login")
+    register_page = client.get("/register")
+
+    assert "/static/login-backgrounds/auth-bg-" in login_page.text
+    assert "/static/login-backgrounds/auth-bg-" in register_page.text
+    assert "--auth-background-image" in login_page.text
+    assert "--auth-background-image" in register_page.text
+
+
 def test_register_privacy_consent_uses_modal_without_expanding_form(client):
     response = client.get("/register")
     form_start = response.text.index('<form')

@@ -6,7 +6,11 @@
 {% block body %}
 <main class="auth-wrap">
   <section class="auth-card">
-    <div class="auth-visual" aria-hidden="true"></div>
+    <div
+      class="auth-visual"
+      style="--auth-background-image: url('{{ auth_background_url }}');"
+      aria-hidden="true"
+    ></div>
     <div class="auth-panel">
       <a class="brand" href="{{ url_for('login') }}">TechX心情晴雨表</a>
       <div class="auth-heading">

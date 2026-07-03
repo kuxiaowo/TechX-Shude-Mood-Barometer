@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import os
+import random
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -50,6 +51,8 @@ load_env_file(BASE_DIR / ".env")
 DEFAULT_DATABASE = BASE_DIR / "data" / "mood_barometer.sqlite3"
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
+AUTH_BACKGROUND_DIR = STATIC_DIR / "login-backgrounds"
+AUTH_BACKGROUND_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 MOODS = [
     {"emoji": "😄", "label": "开心"},
@@ -325,10 +328,26 @@ def render_template(
             "grades": GRADES,
             "programs": PROGRAMS,
             "current_user": get_current_user(request),
+            "auth_background_url": get_auth_background_url(),
             **(context or {}),
         },
         status_code=status_code,
     )
+
+
+def get_auth_background_url() -> str:
+    if not AUTH_BACKGROUND_DIR.exists():
+        return "/static/login-campus.png"
+
+    filenames = sorted(
+        path.name
+        for path in AUTH_BACKGROUND_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in AUTH_BACKGROUND_EXTENSIONS
+    )
+    if not filenames:
+        return "/static/login-campus.png"
+
+    return f"/static/login-backgrounds/{random.choice(filenames)}"
 
 
 def datetime_cn(value: str | None) -> str:

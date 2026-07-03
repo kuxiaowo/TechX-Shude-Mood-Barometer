@@ -68,7 +68,7 @@ textarea {
 .auth-visual {
   background:
     linear-gradient(90deg, rgba(5, 20, 40, 0.08), rgba(5, 20, 40, 0)),
-    url("/static/login-campus.png") center / cover no-repeat;
+    var(--auth-background-image, url("/static/login-campus.png")) center / cover no-repeat;
   min-height: 560px;
 }
 
