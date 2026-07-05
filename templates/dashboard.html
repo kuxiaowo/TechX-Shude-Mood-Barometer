@@ -26,6 +26,12 @@
         <a class="nav-item {% if active_page == 'admin_dashboard' %}is-active{% endif %}" href="{{ url_for('admin_dashboard') }}">
           <span>管理员后台</span>
         </a>
+        <a class="nav-item {% if active_page == 'admin_activity' %}is-active{% endif %}" href="{{ url_for('admin_activity') }}">
+          <span>访问动态</span>
+        </a>
+        <a class="nav-item {% if active_page == 'admin_settings' %}is-active{% endif %}" href="{{ url_for('admin_settings') }}">
+          <span>管理员设置</span>
+        </a>
       {% endif %}
     </nav>
 

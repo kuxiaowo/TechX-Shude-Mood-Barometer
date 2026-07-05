@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import create_app
+from main import MOODS, create_app
 
 
 @pytest.fixture()
@@ -185,6 +185,197 @@ def test_register_allows_empty_grade_and_program(app, client):
     assert users[0]["program"] == ""
 
 
+def test_register_rate_limit_counts_every_post_by_ip(app, client):
+    for index in range(5):
+        response = client.post(
+            "/register",
+            data={
+                "real_name": "",
+                "nickname": f"limited-{index}",
+                "grade": "",
+                "program": "",
+                "password": "",
+            },
+        )
+        assert response.status_code == 200
+
+    limited = client.post(
+        "/register",
+        data={
+            "real_name": "",
+            "nickname": "limited-5",
+            "grade": "",
+            "program": "",
+            "password": "",
+        },
+    )
+
+    assert limited.status_code == 429
+    assert rows(app, "SELECT COUNT(*) AS count FROM users")[0]["count"] == 0
+    attempts = rows(
+        app,
+        "SELECT result FROM registration_attempts ORDER BY id",
+    )
+    assert len(attempts) == 6
+    assert attempts[-1]["result"] == "rate_limited"
+
+
+def test_admin_can_adjust_registration_rate_limit(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+
+    response = client.post(
+        "/admin/settings",
+        data={"registration_ip_limit_per_24h": "2"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert 'value="2"' in response.text
+    assert rows(
+        app,
+        "SELECT value FROM app_settings WHERE key = ?",
+        ("registration_ip_limit_per_24h",),
+    )[0]["value"] == "2"
+
+    invalid = client.post(
+        "/admin/settings",
+        data={"registration_ip_limit_per_24h": "0"},
+        follow_redirects=True,
+    )
+    assert invalid.status_code == 200
+    assert rows(
+        app,
+        "SELECT value FROM app_settings WHERE key = ?",
+        ("registration_ip_limit_per_24h",),
+    )[0]["value"] == "2"
+
+    client.post("/logout")
+    execute(app, "DELETE FROM registration_attempts")
+    for index in range(2):
+        response = client.post(
+            "/register",
+            data={
+                "real_name": "",
+                "nickname": f"limited-{index}",
+                "grade": "",
+                "program": "",
+                "password": "",
+            },
+        )
+        assert response.status_code == 200
+
+    limited = client.post(
+        "/register",
+        data={
+            "real_name": "",
+            "nickname": "limited-2",
+            "grade": "",
+            "program": "",
+            "password": "",
+        },
+    )
+    assert limited.status_code == 429
+
+
+def test_forwarded_for_is_trusted_only_from_local_proxy(tmp_path):
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(tmp_path / "proxy_ip.sqlite3"),
+            "SECRET_KEY": "test-secret",
+        }
+    )
+    data = {
+        "real_name": "",
+        "nickname": "proxy-test",
+        "grade": "",
+        "program": "",
+        "password": "",
+    }
+
+    trusted_proxy = TestClient(
+        app,
+        follow_redirects=False,
+        client=("127.0.0.1", 50000),
+    )
+    trusted_proxy.post(
+        "/register",
+        data=data,
+        headers={"x-forwarded-for": "203.0.113.10, 10.0.0.1"},
+    )
+
+    untrusted_client = TestClient(
+        app,
+        follow_redirects=False,
+        client=("198.51.100.20", 50000),
+    )
+    untrusted_client.post(
+        "/register",
+        data={**data, "nickname": "spoof-test"},
+        headers={"x-forwarded-for": "203.0.113.11"},
+    )
+
+    ips = [
+        row["ip_address"]
+        for row in rows(
+            app,
+            "SELECT ip_address FROM registration_attempts ORDER BY id",
+        )
+    ]
+    assert ips == ["203.0.113.10", "198.51.100.20"]
+
+
+def test_audit_rows_older_than_retention_are_pruned(app, client):
+    old_created_at = "2020-01-01T00:00:00"
+    execute(
+        app,
+        """
+        INSERT INTO activity_logs
+            (
+                user_id,
+                user_nickname,
+                ip_address,
+                method,
+                path,
+                status_code,
+                event_type,
+                action,
+                metadata,
+                created_at
+            )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            None,
+            "",
+            "203.0.113.30",
+            "GET",
+            "/old",
+            200,
+            "access",
+            "old_access",
+            "{}",
+            old_created_at,
+        ),
+    )
+    execute(
+        app,
+        """
+        INSERT INTO registration_attempts
+            (ip_address, nickname, result, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("203.0.113.30", "old", "missing_fields", old_created_at),
+    )
+
+    client.get("/login")
+
+    assert not rows(app, "SELECT id FROM activity_logs WHERE action = 'old_access'")
+    assert not rows(
+        app,
+        "SELECT id FROM registration_attempts WHERE nickname = 'old'",
+    )
+
+
 def test_existing_users_table_gets_grade_and_program_columns(tmp_path):
     db_path = tmp_path / "old_schema.sqlite3"
     with sqlite3.connect(db_path) as db:
@@ -212,6 +403,23 @@ def test_existing_users_table_gets_grade_and_program_columns(tmp_path):
     assert "program" in columns
     assert "is_admin" in columns
     assert "privacy_consent_at" in columns
+
+    tables = {
+        row["name"]
+        for row in rows(
+            migrated_app,
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+    }
+    assert "app_settings" in tables
+    assert "registration_attempts" in tables
+    assert "activity_logs" in tables
+    setting = rows(
+        migrated_app,
+        "SELECT value FROM app_settings WHERE key = ?",
+        ("registration_ip_limit_per_24h",),
+    )[0]
+    assert setting["value"] == "5"
 
 
 def test_configured_admin_nickname_promotes_existing_user(tmp_path):
@@ -368,7 +576,8 @@ def test_first_registered_user_can_view_admin_dashboard(app, client):
 
     response = login(client, nickname="admin-user")
     assert "管理员后台" in response.text
-    assert "管理员设置" not in response.text
+    assert 'href="/admin/activity"' in response.text
+    assert 'href="/admin/settings"' in response.text
     assert "进入后台" not in response.text
     assert "reason-question" in response.text
     assert "reason-answer" in response.text
@@ -424,6 +633,11 @@ def test_non_admin_user_cannot_view_admin_dashboard(client):
     assert "只有管理员可以访问后台" in response.text
     assert "用户列表" not in response.text
 
+    settings = client.get("/admin/settings", follow_redirects=True)
+    activity = client.get("/admin/activity", follow_redirects=True)
+    assert "安全设置" not in settings.text
+    assert "activity-log-entry" not in activity.text
+
 
 def test_admin_can_promote_user_to_admin(app, client):
     register(client, nickname="admin-user", real_name="管理员")
@@ -464,6 +678,162 @@ def test_admin_can_promote_user_to_admin(app, client):
     assert "这个用户已经是管理员" in repeated.text
 
 
+def test_admin_can_bulk_delete_users_and_related_data(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    register(client, nickname="student", real_name="李四")
+    client.post(
+        "/mood-report",
+        data={
+            "mood_emoji": MOODS[0]["emoji"],
+            "day_event": "需要删除",
+            "body_feeling": "还可以",
+            "extra_thoughts": "",
+        },
+        follow_redirects=True,
+    )
+    client.post("/logout")
+    register(client, nickname="other", real_name="王五")
+    client.post("/logout")
+    login(client, nickname="admin-user")
+
+    user_rows = rows(app, "SELECT id, nickname FROM users ORDER BY id")
+    target_ids = [
+        row["id"]
+        for row in user_rows
+        if row["nickname"] in {"student", "other"}
+    ]
+    response = client.post(
+        "/admin/users/delete",
+        data={"user_ids": [str(user_id) for user_id in target_ids]},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    remaining_users = rows(app, "SELECT nickname FROM users ORDER BY id")
+    assert [row["nickname"] for row in remaining_users] == ["admin-user"]
+    assert rows(app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 0
+    assert all(
+        row["user_id"] is None
+        for row in rows(
+            app,
+            """
+            SELECT user_id
+            FROM registration_attempts
+            WHERE nickname IN (?, ?)
+            """,
+            ("student", "other"),
+        )
+    )
+    assert not rows(
+        app,
+        f"SELECT id FROM activity_logs WHERE user_id IN ({','.join('?' for _ in target_ids)})",
+        tuple(target_ids),
+    )
+    deletion_log = rows(
+        app,
+        "SELECT metadata FROM activity_logs WHERE action = ?",
+        ("admin_deleted_users",),
+    )[0]
+    assert "student" in deletion_log["metadata"]
+    assert "other" in deletion_log["metadata"]
+
+
+def test_admin_bulk_delete_skips_current_user(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    register(client, nickname="student", real_name="李四")
+    client.post("/logout")
+    login(client, nickname="admin-user")
+
+    users = rows(app, "SELECT id, nickname FROM users ORDER BY id")
+    admin_id = users[0]["id"]
+    student_id = users[1]["id"]
+
+    self_only = client.post(
+        "/admin/users/delete",
+        data={"user_ids": str(admin_id)},
+        follow_redirects=True,
+    )
+    assert self_only.status_code == 200
+    assert [row["nickname"] for row in rows(app, "SELECT nickname FROM users")] == [
+        "admin-user",
+        "student",
+    ]
+
+    mixed = client.post(
+        "/admin/users/delete",
+        data={"user_ids": [str(admin_id), str(student_id)]},
+        follow_redirects=True,
+    )
+    assert mixed.status_code == 200
+    assert [row["nickname"] for row in rows(app, "SELECT nickname FROM users")] == [
+        "admin-user",
+    ]
+
+
+def test_admin_activity_logs_key_actions_and_filters_static_assets(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    login(client, nickname="admin-user")
+    client.post(
+        "/mood-report",
+        data={
+            "mood_emoji": MOODS[0]["emoji"],
+            "day_event": "检查动态",
+            "body_feeling": "还可以",
+            "extra_thoughts": "不记录正文",
+        },
+        follow_redirects=True,
+    )
+    client.post(
+        "/admin/settings",
+        data={"registration_ip_limit_per_24h": "6"},
+        follow_redirects=True,
+    )
+    client.get("/static/styles.css")
+
+    actions = {
+        row["action"]
+        for row in rows(app, "SELECT action FROM activity_logs")
+    }
+    assert "register_success" in actions
+    assert "login_success" in actions
+    assert "logout" in actions
+    assert "mood_report_created" in actions
+    assert "admin_settings_updated" in actions
+    assert not rows(
+        app,
+        "SELECT id FROM activity_logs WHERE path = ?",
+        ("/static/styles.css",),
+    )
+    assert not rows(
+        app,
+        "SELECT id FROM activity_logs WHERE metadata LIKE ?",
+        ("%不记录正文%",),
+    )
+
+    activity_page = client.get("/admin/activity")
+    assert activity_page.status_code == 200
+    assert "register_success" in activity_page.text
+    assert "mood_report_created" in activity_page.text
+    assert "admin_settings_updated" in activity_page.text
+
+    admin_id = rows(
+        app,
+        "SELECT id FROM users WHERE nickname = ?",
+        ("admin-user",),
+    )[0]["id"]
+    filtered = client.get(f"/admin/activity?user_id={admin_id}")
+    assert filtered.status_code == 200
+    assert "admin-user" in filtered.text
+
+    detail = client.get(f"/admin/users/{admin_id}")
+    assert detail.status_code == 200
+    assert "最近访问动态" in detail.text
+    assert "mood_report_created" in detail.text
+
+
 def test_non_admin_user_cannot_promote_users(app, client):
     register(client, nickname="admin-user")
     client.post("/logout")
@@ -481,6 +851,15 @@ def test_non_admin_user_cannot_promote_users(app, client):
     assert rows(app, "SELECT is_admin FROM users WHERE nickname = 'student'")[0][
         "is_admin"
     ] == 0
+
+    delete_response = client.post(
+        "/admin/users/delete",
+        data={"user_ids": str(admin_id)},
+        follow_redirects=True,
+    )
+    assert delete_response.status_code == 200
+    assert "只有管理员可以访问后台" in delete_response.text
+    assert rows(app, "SELECT nickname FROM users WHERE id = ?", (admin_id,))
 
 
 def test_update_nickname_success_and_duplicate(app, client):

@@ -1,0 +1,27 @@
+{% extends "dashboard.html" %}
+
+{% block title %}管理员设置 - TechX心情晴雨表{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">管理员设置</p>
+  <h1>安全设置</h1>
+</section>
+
+<form class="settings-form admin-settings-form" method="post" action="{{ url_for('admin_settings') }}">
+  <label>
+    <span>每 IP 每 24 小时注册尝试上限</span>
+    <input
+      name="registration_ip_limit_per_24h"
+      type="number"
+      min="1"
+      max="{{ registration_ip_limit_max }}"
+      step="1"
+      value="{{ registration_ip_limit }}"
+      required
+    >
+  </label>
+  <p class="muted">默认值为 5。每次提交注册表单都会计入尝试次数，包括失败和被拒绝的提交。</p>
+  <button class="primary-button compact" type="submit">保存设置</button>
+</form>
+{% endblock %}

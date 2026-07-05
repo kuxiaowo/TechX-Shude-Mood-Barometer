@@ -42,37 +42,59 @@
   </div>
 </section>
 
-<section class="admin-user-panel" aria-label="用户列表">
-  <div class="admin-user-list">
-    {% if users %}
-      {% for user in users %}
-        <a class="admin-user-row" href="{{ url_for('admin_user_detail', user_id=user['id']) }}">
-          <div class="admin-user-identity">
-            <div class="admin-user-name-line">
-              <strong>{{ user["real_name"] }}</strong>
-              <span>@{{ user["nickname"] }}</span>
-              <span>{{ user["grade"] or "未设置年级" }}</span>
-              <span>{{ user["program"] or "未设置项目" }}</span>
-            </div>
-            {% if user["is_admin"] %}
-              <span class="admin-badge">管理员</span>
-            {% endif %}
-          </div>
-          <div class="admin-user-row-meta">
-            <span>{{ user["entry_count"] }} 条记录</span>
-            <span>最近：{{ user["latest_entry_at"] | datetime_cn or "暂无" }}</span>
-          </div>
-        </a>
-      {% endfor %}
-    {% else %}
-      <p class="muted">
-        {% if search_query %}
-          没有找到匹配的用户。
-        {% else %}
-          暂无用户。
-        {% endif %}
-      </p>
-    {% endif %}
+<form
+  class="admin-bulk-form"
+  method="post"
+  action="{{ url_for('delete_users') }}"
+  data-confirm="确定删除选中的用户吗？该操作会同时删除这些用户的心情记录。"
+>
+  <div class="admin-bulk-actions">
+    <button class="danger-button compact" type="submit">删除选中用户</button>
+    <span>当前登录账号不会被删除；访问动态会保留为审计记录。</span>
   </div>
-</section>
+
+  <section class="admin-user-panel" aria-label="用户列表">
+    <div class="admin-user-list">
+      {% if users %}
+        {% for user in users %}
+          <div class="admin-user-row admin-user-select-row">
+            <label class="admin-user-check" aria-label="选择 {{ user['real_name'] }}">
+              <input
+                name="user_ids"
+                type="checkbox"
+                value="{{ user['id'] }}"
+                {% if user["id"] == current_user["id"] %}disabled{% endif %}
+              >
+            </label>
+            <a class="admin-user-link" href="{{ url_for('admin_user_detail', user_id=user['id']) }}">
+              <div class="admin-user-identity">
+                <div class="admin-user-name-line">
+                  <strong>{{ user["real_name"] }}</strong>
+                  <span>@{{ user["nickname"] }}</span>
+                  <span>{{ user["grade"] or "未设置年级" }}</span>
+                  <span>{{ user["program"] or "未设置项目" }}</span>
+                </div>
+                {% if user["is_admin"] %}
+                  <span class="admin-badge">管理员</span>
+                {% endif %}
+              </div>
+              <div class="admin-user-row-meta">
+                <span>{{ user["entry_count"] }} 条记录</span>
+                <span>最近：{{ user["latest_entry_at"] | datetime_cn or "暂无" }}</span>
+              </div>
+            </a>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="muted">
+          {% if search_query %}
+            没有找到匹配的用户。
+          {% else %}
+            暂无用户。
+          {% endif %}
+        </p>
+      {% endif %}
+    </div>
+  </section>
+</form>
 {% endblock %}

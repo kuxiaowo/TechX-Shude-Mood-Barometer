@@ -1,0 +1,104 @@
+{% extends "dashboard.html" %}
+
+{% block title %}访问动态 - TechX心情晴雨表{% endblock %}
+{% block content_card_class %}adaptive-scroll-card{% endblock %}
+
+{% block content %}
+<section class="page-heading">
+  <p class="eyebrow">管理员后台</p>
+  <h1>访问动态</h1>
+</section>
+
+<form class="admin-search-form activity-filter-form" method="get" action="{{ url_for('admin_activity') }}">
+  <label>
+    <span>用户 ID</span>
+    <input name="user_id" value="{{ filters.user_id }}" placeholder="留空为全部，anonymous 为匿名" autocomplete="off">
+  </label>
+  <label>
+    <span>IP</span>
+    <input name="ip" value="{{ filters.ip }}" placeholder="输入完整或部分 IP" autocomplete="off">
+  </label>
+  <label>
+    <span>关键词</span>
+    <input name="q" value="{{ filters.q }}" placeholder="路径、动作、用户" autocomplete="off">
+  </label>
+  <button class="primary-button compact" type="submit">筛选</button>
+  {% if filters.user_id or filters.ip or filters.q %}
+    <a class="outline-button admin-search-clear" href="{{ url_for('admin_activity') }}">清空</a>
+  {% endif %}
+</form>
+
+<section class="admin-user-card activity-stats-card" aria-label="按用户统计">
+  <header class="admin-user-header">
+    <div>
+      <h2>按用户统计</h2>
+      <p>按最近活动时间排序，匿名访问单独统计。</p>
+    </div>
+  </header>
+  <div class="activity-stat-list">
+    {% if activity_user_stats %}
+      {% for stat in activity_user_stats %}
+        <a
+          class="activity-stat-row"
+          href="{{ url_for('admin_activity', user_id=stat['user_id'] if stat['user_id'] is not none else 'anonymous') }}"
+        >
+          <div>
+            <strong>{{ stat["real_name"] }}</strong>
+            <span>@{{ stat["nickname"] }}</span>
+          </div>
+          <span>{{ stat["activity_count"] }} 次动态</span>
+          <span>{{ stat["ip_count"] }} 个 IP</span>
+          <span>{{ stat["latest_activity_at"] | datetime_cn }}</span>
+        </a>
+      {% endfor %}
+    {% else %}
+      <p class="muted">暂无访问动态。</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="admin-entry-list activity-log-list" aria-label="最近动态">
+  {% if activity_logs %}
+    {% for log in activity_logs %}
+      <article class="admin-entry activity-log-entry">
+        <div class="admin-entry-heading">
+          <div>
+            <strong>{{ log["action"] }}</strong>
+            <span class="admin-entry-time">{{ log["created_at"] | datetime_cn }}</span>
+          </div>
+          <span class="admin-badge">{{ log["event_type"] }}</span>
+        </div>
+        <dl class="activity-log-meta">
+          <div>
+            <dt>用户</dt>
+            <dd>
+              {% if log["user_id"] %}
+                {{ log["real_name"] or log["user_nickname"] }} @{{ log["nickname"] or log["user_nickname"] }}
+              {% else %}
+                匿名
+              {% endif %}
+            </dd>
+          </div>
+          <div>
+            <dt>IP</dt>
+            <dd><a href="{{ url_for('admin_activity', ip=log['ip_address']) }}">{{ log["ip_address"] }}</a></dd>
+          </div>
+          <div>
+            <dt>请求</dt>
+            <dd>{{ log["method"] }} {{ log["path"] }}</dd>
+          </div>
+          <div>
+            <dt>状态</dt>
+            <dd>{{ log["status_code"] or "-" }}</dd>
+          </div>
+        </dl>
+        {% if log["metadata"] and log["metadata"] != "{}" %}
+          <p class="activity-log-metadata">{{ log["metadata"] }}</p>
+        {% endif %}
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">没有找到匹配的访问动态。</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -49,6 +49,29 @@
   </dl>
 </section>
 
+<section class="admin-user-card activity-stats-card">
+  <header class="admin-user-header">
+    <div>
+      <h2>最近访问动态</h2>
+      <p>只显示该用户最近的访问和操作。</p>
+    </div>
+    <a class="outline-button admin-back-link" href="{{ url_for('admin_activity', user_id=target_user['id']) }}">查看全部动态</a>
+  </header>
+  {% if activity_logs %}
+    <div class="activity-mini-list">
+      {% for log in activity_logs %}
+        <div class="activity-mini-row">
+          <strong>{{ log["action"] }}</strong>
+          <span>{{ log["ip_address"] }}</span>
+          <span>{{ log["created_at"] | datetime_cn }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">这个用户还没有访问动态。</p>
+  {% endif %}
+</section>
+
 <section class="admin-entry-list" aria-label="心情记录">
   {% if entries %}
     {% for entry in entries %}
