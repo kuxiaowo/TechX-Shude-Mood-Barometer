@@ -1,0 +1,50 @@
+<section class="admin-entry-list activity-log-list" aria-label="{{ activity_log_aria_label | default('最近动态') }}">
+  {% if activity_logs %}
+    {% for log in activity_logs %}
+      <article class="admin-entry activity-log-entry">
+        <div class="admin-entry-heading">
+          <div>
+            <strong>{{ log["action"] }}</strong>
+            <span class="admin-entry-time">{{ log["created_at"] | datetime_cn }}</span>
+          </div>
+          <span class="admin-badge">{{ log["event_type"] }}</span>
+        </div>
+        <dl class="activity-log-meta">
+          <div>
+            <dt>用户</dt>
+            <dd>
+              {% if log["user_id"] is not none %}
+                <a class="activity-user-link" href="{{ url_for('admin_activity_user_detail', user_id=log['user_id']) }}">
+                  {{ log["real_name"] or log["user_nickname"] }} @{{ log["nickname"] or log["user_nickname"] }}
+                </a>
+              {% elif log["user_nickname"] %}
+                <a class="activity-user-link" href="{{ url_for('admin_activity_user_detail', user_id='@' ~ log['user_nickname']) }}">
+                  @{{ log["user_nickname"] }}
+                </a>
+              {% else %}
+                <a class="activity-user-link" href="{{ url_for('admin_activity_user_detail', user_id='anonymous') }}">匿名</a>
+              {% endif %}
+            </dd>
+          </div>
+          <div>
+            <dt>IP</dt>
+            <dd><a href="{{ url_for('admin_activity', ip=log['ip_address']) }}">{{ log["ip_address"] }}</a></dd>
+          </div>
+          <div>
+            <dt>请求</dt>
+            <dd>{{ log["method"] }} {{ log["path"] }}</dd>
+          </div>
+          <div>
+            <dt>状态</dt>
+            <dd>{{ log["status_code"] or "-" }}</dd>
+          </div>
+        </dl>
+        {% if log["metadata"] and log["metadata"] != "{}" %}
+          <p class="activity-log-metadata">{{ log["metadata"] }}</p>
+        {% endif %}
+      </article>
+    {% endfor %}
+  {% else %}
+    <p class="muted">{{ empty_activity_message | default("没有找到匹配的访问动态。") }}</p>
+  {% endif %}
+</section>

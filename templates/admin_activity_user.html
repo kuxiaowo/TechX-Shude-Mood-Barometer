@@ -1,0 +1,37 @@
+{% extends "dashboard.html" %}
+
+{% block title %}用户动态详情 - TechX心情晴雨表{% endblock %}
+{% block content_card_class %}adaptive-scroll-card{% endblock %}
+
+{% block content %}
+<section class="page-heading admin-detail-heading">
+  <div>
+    <p class="eyebrow">用户动态详情</p>
+    <h1>{{ activity_target.label }}</h1>
+    {% if activity_target.subtitle %}
+      <p class="muted">{{ activity_target.subtitle }}</p>
+    {% endif %}
+  </div>
+  <div class="admin-user-header-actions">
+    {% if activity_target.profile_user_id %}
+      <a class="outline-button admin-back-link" href="{{ url_for('admin_user_detail', user_id=activity_target.profile_user_id) }}">查看心情记录</a>
+    {% endif %}
+    <a class="outline-button admin-back-link" href="{{ url_for('admin_activity') }}">返回访问动态</a>
+  </div>
+</section>
+
+<section class="admin-summary" aria-label="用户动态概览">
+  <div>
+    <span>动态数</span>
+    <strong>{{ activity_logs|length }}</strong>
+  </div>
+  <div>
+    <span>最近动态</span>
+    <strong>{{ activity_logs[0]["created_at"] | datetime_cn if activity_logs else "暂无" }}</strong>
+  </div>
+</section>
+
+{% set activity_log_aria_label = "用户全部动态" %}
+{% set empty_activity_message = "这个用户还没有访问动态。" %}
+{% include "_activity_log_list.html" %}
+{% endblock %}

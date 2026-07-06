@@ -1387,6 +1387,33 @@ def register_routes(app: FastAPI) -> None:
             },
         )
 
+    @app.get("/admin/activity/user", name="admin_activity_user_detail")
+    async def admin_activity_user_detail(request: Request):
+        user = require_admin(request)
+        if isinstance(user, RedirectResponse):
+            return user
+
+        user_key = request.query_params.get("user_id", "").strip()
+        if not user_key:
+            flash(request, "请选择要查看动态的用户。", "error")
+            return redirect_to(request, "admin_activity")
+
+        activity_logs = get_activity_logs(
+            request,
+            {"user_id": user_key, "ip": "", "q": ""},
+            limit=None,
+        )
+        return render_template(
+            request,
+            "admin_activity_user.html",
+            {
+                "active_page": "admin_activity",
+                "activity_target": get_activity_user_target(request, user_key),
+                "activity_logs": activity_logs,
+                "recent_entries": [],
+            },
+        )
+
     @app.post("/admin/users/delete", name="delete_users")
     async def delete_users(request: Request):
         user = require_admin(request)
@@ -1675,6 +1702,61 @@ def get_admin_user_detail(
     ).fetchall()
 
     return user, entries
+
+
+def get_activity_user_target(request: Request, user_key: str) -> dict[str, Any]:
+    normalized_key = user_key.strip()
+    if normalized_key.lower() == "anonymous":
+        return {
+            "label": "匿名访问",
+            "subtitle": "未登录或未绑定用户的访问动态",
+            "profile_user_id": None,
+        }
+
+    db = get_db(request)
+    if normalized_key.startswith("@"):
+        nickname = normalized_key.removeprefix("@").strip()
+        user = db.execute(
+            "SELECT id, real_name, nickname FROM users WHERE nickname = ?",
+            (nickname,),
+        ).fetchone()
+        if user is not None:
+            return {
+                "label": str(user["real_name"]),
+                "subtitle": f"@{user['nickname']}",
+                "profile_user_id": int(user["id"]),
+            }
+        return {
+            "label": f"@{nickname}" if nickname else "历史昵称",
+            "subtitle": "按日志中保留的历史昵称匹配",
+            "profile_user_id": None,
+        }
+
+    try:
+        user_id = int(normalized_key)
+    except ValueError:
+        return {
+            "label": normalized_key,
+            "subtitle": "按用户关键词匹配",
+            "profile_user_id": None,
+        }
+
+    user = db.execute(
+        "SELECT id, real_name, nickname FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if user is None:
+        return {
+            "label": f"用户 #{user_id}",
+            "subtitle": "没有找到这个用户的资料，但仍会显示匹配到的动态",
+            "profile_user_id": None,
+        }
+
+    return {
+        "label": str(user["real_name"]),
+        "subtitle": f"@{user['nickname']}",
+        "profile_user_id": int(user["id"]),
+    }
 
 
 def get_activity_logs(

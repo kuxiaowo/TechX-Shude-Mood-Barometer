@@ -10,7 +10,7 @@
     <h1>{{ target_user["real_name"] }}</h1>
   </div>
   <div class="admin-user-header-actions">
-    <a class="outline-button admin-back-link" href="{{ url_for('admin_activity', user_id=target_user['id']) }}">查看全部动态</a>
+    <a class="outline-button admin-back-link" href="{{ url_for('admin_activity_user_detail', user_id=target_user['id']) }}">查看全部动态</a>
     <a class="outline-button admin-back-link" href="{{ url_for('admin_dashboard') }}">返回用户列表</a>
   </div>
 </section>

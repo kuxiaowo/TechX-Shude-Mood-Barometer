@@ -899,11 +899,21 @@ def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
 
     activity_page = client.get("/admin/activity")
     assert activity_page.status_code == 200
-    assert f'href="/admin/activity?user_id={student_id}"' in activity_page.text
+    assert f'href="/admin/activity/user?user_id={student_id}"' in activity_page.text
     assert (
-        f'class="activity-user-link" href="/admin/activity?user_id={student_id}"'
+        f'class="activity-user-link" href="/admin/activity/user?user_id={student_id}"'
         in activity_page.text
     )
+
+    detail = client.get(f"/admin/activity/user?user_id={student_id}")
+    assert detail.status_code == 200
+    assert "用户动态详情" in detail.text
+    assert "李四" in detail.text
+    assert "@student" in detail.text
+    assert "student_action_000" in detail.text
+    assert "student_action_204" in detail.text
+    assert "other_action" not in detail.text
+    assert detail.text.count("activity-log-entry") >= 205
 
     filtered = client.get(f"/admin/activity?user_id={student_id}")
     assert filtered.status_code == 200
