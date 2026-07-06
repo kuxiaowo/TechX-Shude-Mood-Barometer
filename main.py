@@ -1297,11 +1297,6 @@ def register_routes(app: FastAPI) -> None:
                 "active_page": "admin_dashboard",
                 "target_user": target_user,
                 "entries": entries,
-                "activity_logs": get_recent_activity_logs(
-                    request,
-                    user_id=user_id,
-                    limit=8,
-                ),
                 "recent_entries": [],
             },
         )
@@ -1381,7 +1376,11 @@ def register_routes(app: FastAPI) -> None:
             "admin_activity.html",
             {
                 "active_page": "admin_activity",
-                "activity_logs": get_activity_logs(request, filters),
+                "activity_logs": get_activity_logs(
+                    request,
+                    filters,
+                    limit=None if filters["user_id"] else 200,
+                ),
                 "activity_user_stats": get_activity_user_stats(request),
                 "filters": filters,
                 "recent_entries": [],
@@ -1625,9 +1624,11 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
            OR users.nickname LIKE ?
            OR users.grade LIKE ?
            OR users.program LIKE ?
+           OR CAST(users.id AS TEXT) LIKE ?
         """
         like_query = f"%{search_query}%"
-        params = (like_query, like_query, like_query, like_query)
+        nickname_query = f"%{search_query.removeprefix('@')}%"
+        params = (like_query, nickname_query, like_query, like_query, like_query)
 
     sql += """
     GROUP BY users.id
@@ -1679,7 +1680,7 @@ def get_admin_user_detail(
 def get_activity_logs(
     request: Request,
     filters: dict[str, str] | None = None,
-    limit: int = 200,
+    limit: int | None = 200,
 ) -> list[sqlite3.Row]:
     filters = filters or {}
     sql = """
@@ -1705,14 +1706,27 @@ def get_activity_logs(
 
     user_id = filters.get("user_id", "").strip()
     if user_id:
-        if user_id == "anonymous":
+        if user_id.lower() == "anonymous":
             clauses.append("activity_logs.user_id IS NULL")
         else:
             try:
-                clauses.append("activity_logs.user_id = ?")
-                params.append(int(user_id))
+                selected_user_id = int(user_id)
             except ValueError:
-                clauses.append("1 = 0")
+                like_query = f"%{user_id}%"
+                nickname_query = f"%{user_id.removeprefix('@')}%"
+                clauses.append(
+                    """
+                    (
+                        users.real_name LIKE ?
+                        OR users.nickname LIKE ?
+                        OR activity_logs.user_nickname LIKE ?
+                    )
+                    """
+                )
+                params.extend([like_query, nickname_query, nickname_query])
+            else:
+                clauses.append("activity_logs.user_id = ?")
+                params.append(selected_user_id)
 
     ip_filter = filters.get("ip", "").strip()
     if ip_filter:
@@ -1722,6 +1736,7 @@ def get_activity_logs(
     search_query = filters.get("q", "").strip()
     if search_query:
         like_query = f"%{search_query}%"
+        nickname_query = f"%{search_query.removeprefix('@')}%"
         clauses.append(
             """
             (
@@ -1733,19 +1748,33 @@ def get_activity_logs(
                 OR activity_logs.user_nickname LIKE ?
                 OR users.real_name LIKE ?
                 OR users.nickname LIKE ?
+                OR activity_logs.metadata LIKE ?
             )
             """
         )
-        params.extend([like_query] * 8)
+        params.extend(
+            [
+                like_query,
+                like_query,
+                like_query,
+                like_query,
+                like_query,
+                nickname_query,
+                like_query,
+                nickname_query,
+                like_query,
+            ]
+        )
 
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
 
     sql += """
     ORDER BY activity_logs.created_at DESC, activity_logs.id DESC
-    LIMIT ?
     """
-    params.append(limit)
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
     return get_db(request).execute(sql, tuple(params)).fetchall()
 
 

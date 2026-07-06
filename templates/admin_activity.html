@@ -11,8 +11,8 @@
 
 <form class="admin-search-form activity-filter-form" method="get" action="{{ url_for('admin_activity') }}">
   <label>
-    <span>用户 ID</span>
-    <input name="user_id" value="{{ filters.user_id }}" placeholder="留空为全部，anonymous 为匿名" autocomplete="off">
+    <span>用户</span>
+    <input name="user_id" value="{{ filters.user_id }}" placeholder="ID、姓名、昵称；anonymous 为匿名" autocomplete="off">
   </label>
   <label>
     <span>IP</span>
@@ -57,7 +57,7 @@
   </div>
 </section>
 
-<section class="admin-entry-list activity-log-list" aria-label="最近动态">
+<section class="admin-entry-list activity-log-list" aria-label="{% if filters.user_id %}全部动态{% else %}最近动态{% endif %}">
   {% if activity_logs %}
     {% for log in activity_logs %}
       <article class="admin-entry activity-log-entry">

@@ -1115,6 +1115,20 @@ textarea:focus {
   gap: 16px;
 }
 
+.admin-record-heading {
+  margin-top: 18px;
+}
+
+.admin-record-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.admin-record-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
 .admin-entry-list {
   display: grid;
   gap: 10px;

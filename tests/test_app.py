@@ -1,5 +1,6 @@
 import sqlite3
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import MOODS, create_app
+from main import MOODS, create_app, get_client_ip
 
 
 @pytest.fixture()
@@ -276,52 +277,27 @@ def test_admin_can_adjust_registration_rate_limit(app, client):
     assert limited.status_code == 429
 
 
-def test_forwarded_for_is_trusted_only_from_local_proxy(tmp_path):
-    app = create_app(
-        {
-            "TESTING": True,
-            "DATABASE": str(tmp_path / "proxy_ip.sqlite3"),
-            "SECRET_KEY": "test-secret",
-        }
-    )
-    data = {
-        "real_name": "",
-        "nickname": "proxy-test",
-        "grade": "",
-        "program": "",
-        "password": "",
-    }
+def test_forwarded_for_is_trusted_only_from_local_proxy():
+    class FakeClient:
+        def __init__(self, host):
+            self.host = host
 
-    trusted_proxy = TestClient(
-        app,
-        follow_redirects=False,
-        client=("127.0.0.1", 50000),
+    class FakeRequest:
+        def __init__(self, host, headers):
+            self.client = FakeClient(host)
+            self.headers = headers
+
+    trusted_proxy = FakeRequest(
+        "127.0.0.1",
+        {"x-forwarded-for": "203.0.113.10, 10.0.0.1"},
     )
-    trusted_proxy.post(
-        "/register",
-        data=data,
-        headers={"x-forwarded-for": "203.0.113.10, 10.0.0.1"},
+    untrusted_client = FakeRequest(
+        "198.51.100.20",
+        {"x-forwarded-for": "203.0.113.11"},
     )
 
-    untrusted_client = TestClient(
-        app,
-        follow_redirects=False,
-        client=("198.51.100.20", 50000),
-    )
-    untrusted_client.post(
-        "/register",
-        data={**data, "nickname": "spoof-test"},
-        headers={"x-forwarded-for": "203.0.113.11"},
-    )
-
-    ips = [
-        row["ip_address"]
-        for row in rows(
-            app,
-            "SELECT ip_address FROM registration_attempts ORDER BY id",
-        )
-    ]
-    assert ips == ["203.0.113.10", "198.51.100.20"]
+    assert get_client_ip(trusted_proxy) == "203.0.113.10"
+    assert get_client_ip(untrusted_client) == "198.51.100.20"
 
 
 def test_audit_rows_older_than_retention_are_pruned(app, client):
@@ -618,6 +594,12 @@ def test_first_registered_user_can_view_admin_dashboard(app, client):
     assert "@student" in filtered_panel
     assert "@admin-user" not in filtered_panel
 
+    filtered_at_nickname = client.get("/admin?q=@student")
+    filtered_at_panel = admin_user_panel(filtered_at_nickname.text)
+    assert filtered_at_nickname.status_code == 200
+    assert "@student" in filtered_at_panel
+    assert "@admin-user" not in filtered_at_panel
+
     empty = client.get("/admin?q=not-a-user")
     assert empty.status_code == 200
     assert "没有找到匹配的用户" in empty.text
@@ -830,8 +812,111 @@ def test_admin_activity_logs_key_actions_and_filters_static_assets(app, client):
 
     detail = client.get(f"/admin/users/{admin_id}")
     assert detail.status_code == 200
-    assert "最近访问动态" in detail.text
-    assert "mood_report_created" in detail.text
+    assert "心情记录" in detail.text
+    assert "最近访问动态" not in detail.text
+    assert "mood_report_created" not in detail.text
+
+
+def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    register(client, nickname="student", real_name="李四")
+    client.post("/logout")
+    register(client, nickname="other", real_name="王五")
+    client.post("/logout")
+    login(client, nickname="admin-user")
+
+    user_rows = {
+        row["nickname"]: row["id"]
+        for row in rows(app, "SELECT id, nickname FROM users")
+    }
+    student_id = user_rows["student"]
+    other_id = user_rows["other"]
+    now = datetime.now()
+    with sqlite3.connect(app.state.config["DATABASE"]) as db:
+        for index in range(205):
+            db.execute(
+                """
+                INSERT INTO activity_logs
+                    (
+                        user_id,
+                        user_nickname,
+                        ip_address,
+                        method,
+                        path,
+                        status_code,
+                        event_type,
+                        action,
+                        metadata,
+                        created_at
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    student_id,
+                    "student",
+                    "10.0.0.2",
+                    "GET",
+                    f"/student/{index}",
+                    200,
+                    "access",
+                    f"student_action_{index:03}",
+                    "{}",
+                    (now + timedelta(seconds=index)).isoformat(timespec="seconds"),
+                ),
+            )
+        db.execute(
+            """
+            INSERT INTO activity_logs
+                (
+                    user_id,
+                    user_nickname,
+                    ip_address,
+                    method,
+                    path,
+                    status_code,
+                    event_type,
+                    action,
+                    metadata,
+                    created_at
+                )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                other_id,
+                "other",
+                "10.0.0.3",
+                "GET",
+                "/other",
+                200,
+                "access",
+                "other_action",
+                "{}",
+                (now + timedelta(seconds=300)).isoformat(timespec="seconds"),
+            ),
+        )
+        db.commit()
+
+    activity_page = client.get("/admin/activity")
+    assert activity_page.status_code == 200
+    assert f'href="/admin/activity?user_id={student_id}"' in activity_page.text
+
+    filtered = client.get(f"/admin/activity?user_id={student_id}")
+    assert filtered.status_code == 200
+    assert "student_action_000" in filtered.text
+    assert "student_action_204" in filtered.text
+    assert "other_action" not in filtered.text
+    assert filtered.text.count("activity-log-entry") >= 205
+
+    nickname_filtered = client.get("/admin/activity?user_id=@student")
+    assert nickname_filtered.status_code == 200
+    assert "student_action_204" in nickname_filtered.text
+    assert "other_action" not in nickname_filtered.text
+
+    keyword_filtered = client.get("/admin/activity?q=@student")
+    assert keyword_filtered.status_code == 200
+    assert "student_action_204" in keyword_filtered.text
+    assert "other_action" not in keyword_filtered.text
 
 
 def test_non_admin_user_cannot_promote_users(app, client):

@@ -9,7 +9,10 @@
     <p class="eyebrow">用户心情记录</p>
     <h1>{{ target_user["real_name"] }}</h1>
   </div>
-  <a class="outline-button admin-back-link" href="{{ url_for('admin_dashboard') }}">返回用户列表</a>
+  <div class="admin-user-header-actions">
+    <a class="outline-button admin-back-link" href="{{ url_for('admin_activity', user_id=target_user['id']) }}">查看全部动态</a>
+    <a class="outline-button admin-back-link" href="{{ url_for('admin_dashboard') }}">返回用户列表</a>
+  </div>
 </section>
 
 <section class="admin-user-card">
@@ -49,27 +52,9 @@
   </dl>
 </section>
 
-<section class="admin-user-card activity-stats-card">
-  <header class="admin-user-header">
-    <div>
-      <h2>最近访问动态</h2>
-      <p>只显示该用户最近的访问和操作。</p>
-    </div>
-    <a class="outline-button admin-back-link" href="{{ url_for('admin_activity', user_id=target_user['id']) }}">查看全部动态</a>
-  </header>
-  {% if activity_logs %}
-    <div class="activity-mini-list">
-      {% for log in activity_logs %}
-        <div class="activity-mini-row">
-          <strong>{{ log["action"] }}</strong>
-          <span>{{ log["ip_address"] }}</span>
-          <span>{{ log["created_at"] | datetime_cn }}</span>
-        </div>
-      {% endfor %}
-    </div>
-  {% else %}
-    <p class="muted">这个用户还没有访问动态。</p>
-  {% endif %}
+<section class="admin-record-heading">
+  <h2>心情记录</h2>
+  <p>按提交时间倒序显示。</p>
 </section>
 
 <section class="admin-entry-list" aria-label="心情记录">
