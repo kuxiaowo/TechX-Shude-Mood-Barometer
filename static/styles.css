@@ -1254,6 +1254,17 @@ textarea:focus {
   font-weight: 800;
 }
 
+.activity-user-link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: #b8d6ec;
+  text-underline-offset: 3px;
+}
+
+.activity-user-link:hover {
+  color: #17669c;
+}
+
 .activity-log-metadata {
   margin: 0;
   border-radius: 8px;

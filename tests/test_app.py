@@ -900,6 +900,10 @@ def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
     activity_page = client.get("/admin/activity")
     assert activity_page.status_code == 200
     assert f'href="/admin/activity?user_id={student_id}"' in activity_page.text
+    assert (
+        f'class="activity-user-link" href="/admin/activity?user_id={student_id}"'
+        in activity_page.text
+    )
 
     filtered = client.get(f"/admin/activity?user_id={student_id}")
     assert filtered.status_code == 200

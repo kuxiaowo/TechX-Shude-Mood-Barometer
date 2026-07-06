@@ -72,10 +72,16 @@
           <div>
             <dt>用户</dt>
             <dd>
-              {% if log["user_id"] %}
-                {{ log["real_name"] or log["user_nickname"] }} @{{ log["nickname"] or log["user_nickname"] }}
+              {% if log["user_id"] is not none %}
+                <a class="activity-user-link" href="{{ url_for('admin_activity', user_id=log['user_id']) }}">
+                  {{ log["real_name"] or log["user_nickname"] }} @{{ log["nickname"] or log["user_nickname"] }}
+                </a>
+              {% elif log["user_nickname"] %}
+                <a class="activity-user-link" href="{{ url_for('admin_activity', user_id='@' ~ log['user_nickname']) }}">
+                  @{{ log["user_nickname"] }}
+                </a>
               {% else %}
-                匿名
+                <a class="activity-user-link" href="{{ url_for('admin_activity', user_id='anonymous') }}">匿名</a>
               {% endif %}
             </dd>
           </div>
