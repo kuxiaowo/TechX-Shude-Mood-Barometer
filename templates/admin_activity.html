@@ -1,12 +1,15 @@
-{% extends "dashboard.html" %}
+{% extends "admin_base.html" %}
 
 {% block title %}访问动态 - TechX心情晴雨表{% endblock %}
 {% block content_card_class %}adaptive-scroll-card{% endblock %}
 
 {% block content %}
-<section class="page-heading">
-  <p class="eyebrow">管理员后台</p>
-  <h1>访问动态</h1>
+<section class="admin-console-heading">
+  <div>
+    <p class="eyebrow">Audit trail</p>
+    <h1>访问审计</h1>
+    <p>按用户、IP 或动作检索系统访问轨迹。</p>
+  </div>
 </section>
 
 <form class="admin-search-form activity-filter-form" method="get" action="{{ url_for('admin_activity') }}">

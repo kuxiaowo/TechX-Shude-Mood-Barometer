@@ -1,11 +1,14 @@
-{% extends "dashboard.html" %}
+{% extends "admin_base.html" %}
 
 {% block title %}管理员设置 - TechX心情晴雨表{% endblock %}
 
 {% block content %}
-<section class="page-heading">
-  <p class="eyebrow">管理员设置</p>
-  <h1>安全设置</h1>
+<section class="admin-console-heading">
+  <div>
+    <p class="eyebrow">System policy</p>
+    <h1>系统设置</h1>
+    <p>调整注册与访问安全规则。</p>
+  </div>
 </section>
 
 <form class="settings-form admin-settings-form" method="post" action="{{ url_for('admin_settings') }}">

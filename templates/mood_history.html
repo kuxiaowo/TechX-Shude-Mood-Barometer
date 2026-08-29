@@ -17,28 +17,41 @@
     {% for entry in entries %}
       <article class="history-entry" id="entry-{{ entry['id'] }}">
         <div class="admin-entry-heading">
-          <span class="recent-emoji">
-            <span class="emoji-glyph">{{ entry["mood_emoji"] }}</span>
+          <span class="recent-score">
+            {{ entry["mood_score"] }}
           </span>
           <div>
             <strong>{{ entry["entry_date"] }}</strong>
             <span class="admin-entry-time">{{ entry["created_at"] | datetime_cn }}</span>
           </div>
         </div>
-        <div class="reason-parts">
-          {% for part in entry["reason"] | mood_reason_parts %}
-            <section class="reason-part">
-              {% if part.question %}
-                <span class="reason-question">{{ part.question }}</span>
-              {% endif %}
-              <p class="reason-answer">{{ part.answer }}</p>
+        <dl class="entry-score-grid">
+          <div><dt>综合心情</dt><dd>{{ entry["mood_score"] }}</dd></div>
+          <div><dt>正性情绪</dt><dd>{{ entry["positive_score"] }}</dd></div>
+          <div><dt>负性情绪</dt><dd>{{ entry["negative_score"] }}</dd></div>
+        </dl>
+        {% set response_details = entry["panas_responses"] | panas_response_details %}
+        <div class="panas-record-details" aria-label="10 项量表明细">
+          {% for dimension, dimension_label in [("positive", "正性情绪 5 项"), ("negative", "负性情绪 5 项")] %}
+            <section class="panas-record-group is-{{ dimension }}">
+              <h3>{{ dimension_label }}</h3>
+              <ol>
+                {% for item in response_details if item.dimension == dimension %}
+                  <li>
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.score if item.score is not none else "--" }}</strong>
+                    <small>{{ item.score_label }}</small>
+                  </li>
+                {% endfor %}
+              </ol>
             </section>
           {% endfor %}
         </div>
       </article>
     {% endfor %}
-  {% else %}
+  {% elif not legacy_entries %}
     <p class="muted">还没有心情记录。</p>
   {% endif %}
+  {% include "_legacy_mood_archive.html" %}
 </section>
 {% endblock %}

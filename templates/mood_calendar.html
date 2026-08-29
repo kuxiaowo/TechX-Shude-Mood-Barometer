@@ -1,6 +1,7 @@
 {% extends "dashboard.html" %}
 
 {% block title %}心情日历 - TechX心情晴雨表{% endblock %}
+{% block content_card_class %}calendar-scroll-card{% endblock %}
 
 {% block content %}
 <section class="page-heading calendar-heading">
@@ -11,6 +12,26 @@
   <div class="month-actions" aria-label="切换月份">
     <a class="outline-button" href="{{ url_for('mood_calendar', month=prev_month) }}">上个月</a>
     <a class="outline-button" href="{{ url_for('mood_calendar', month=next_month) }}">下个月</a>
+  </div>
+</section>
+
+<section class="calendar-score-overview" aria-label="本月心情概览">
+  <div>
+    <span>记录天数</span>
+    <strong>{{ month_entries|length }}</strong>
+    {% if month_archive_count %}<small class="calendar-archive-count">含 {{ month_archive_count }} 天旧版存档</small>{% endif %}
+  </div>
+  <div>
+    <span>新版月平均分</span>
+    <strong>{{ month_average if month_average is not none else "--" }}</strong>
+  </div>
+  <div class="calendar-emoji-legend" aria-label="综合分与表情区间">
+    {% for band in mood_score_bands %}
+      <span class="calendar-emoji-band">
+        <b aria-hidden="true">{{ band.emoji }}</b>
+        <small>{{ band.min }}–{{ band.max }} 分<br>{{ band.label }}</small>
+      </span>
+    {% endfor %}
   </div>
 </section>
 
@@ -26,14 +47,33 @@
   {% for week in calendar_rows %}
     {% for cell in week %}
       {% if cell.entry %}
-        <a
-          class="day-cell has-entry {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}"
-          href="{{ url_for('mood_history') }}#entry-{{ cell.entry['id'] }}"
-          aria-label="查看 {{ cell.date.isoformat() }} 的心情记录"
-        >
-          <span class="day-number">{{ cell.date.day }}</span>
-          <span class="day-emoji">{{ cell.entry["mood_emoji"] }}</span>
-        </a>
+        {% if cell.entry["record_type"] == "legacy" %}
+          <a
+            class="day-cell has-entry is-legacy-entry {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}"
+            href="{{ url_for('mood_history') }}#legacy-entry-{{ cell.entry['id'] }}"
+            aria-label="查看 {{ cell.date.isoformat() }} 的旧版心情存档"
+          >
+            <span class="day-number">{{ cell.date.day }}</span>
+            <span class="calendar-day-mood">
+              <span class="calendar-day-emoji" aria-hidden="true">{{ cell.entry["mood_emoji"] }}</span>
+              <small><strong>存档</strong><span>旧版</span></small>
+            </span>
+          </a>
+        {% else %}
+          {% set mood = score_mood(cell.entry["mood_score"]) %}
+          <a
+            class="day-cell has-entry {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}"
+            style="--score: {{ cell.entry['mood_score'] }}"
+            href="{{ url_for('mood_history') }}#entry-{{ cell.entry['id'] }}"
+            aria-label="查看 {{ cell.date.isoformat() }} 的心情量表，{{ mood.label }}，综合分 {{ cell.entry['mood_score'] }}"
+          >
+            <span class="day-number">{{ cell.date.day }}</span>
+            <span class="calendar-day-mood">
+              <span class="calendar-day-emoji" aria-hidden="true">{{ mood.emoji }}</span>
+              <small><strong>{{ cell.entry["mood_score"] }} 分</strong><span>{{ mood.label }}</span></small>
+            </span>
+          </a>
+        {% endif %}
       {% else %}
         <div class="day-cell {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}">
           <span class="day-number">{{ cell.date.day }}</span>
@@ -41,14 +81,5 @@
       {% endif %}
     {% endfor %}
   {% endfor %}
-</section>
-
-<section class="month-summary">
-  <h2>本月概览</h2>
-  {% if month_entries %}
-    <p>本月已有 {{ month_entries|length }} 天留下了心情记录。</p>
-  {% else %}
-    <p>这个月还没有记录。今天可以先写一条，日历就不空着了。</p>
-  {% endif %}
 </section>
 {% endblock %}

@@ -1,44 +1,81 @@
 {% extends "dashboard.html" %}
 
-{% block title %}心情报表 - TechX心情晴雨表{% endblock %}
+{% block title %}PANAS-C-SF 心情量表 - TechX心情晴雨表{% endblock %}
+{% block content_card_class %}panas-card{% endblock %}
 
 {% block content %}
-<section class="page-heading">
-  <p class="eyebrow">心情报表</p>
-  <h1>记录今天的心情</h1>
+<section class="page-heading panas-heading">
+  <div>
+    <p class="eyebrow">PANAS-C-SF · 10 项</p>
+    <h1>今天的情绪，落在哪里？</h1>
+    <p class="panas-intro">回想今天的感受，为每个词选择最符合你的程度。没有标准答案，按第一感觉填写即可。</p>
+  </div>
+  <span class="panas-timeframe">时间范围：今天</span>
 </section>
 
-<form class="mood-form" method="post" action="{{ url_for('mood_report') }}">
-  <fieldset class="mood-picker">
-    <legend>选择一个最接近的心情</legend>
-    <div class="mood-options">
-      {% for mood in moods %}
-        <label class="mood-option">
-          <input type="radio" name="mood_emoji" value="{{ mood.emoji }}" required>
-          <span class="mood-emoji">{{ mood.emoji }}</span>
-          <span class="mood-label">{{ mood.label }}</span>
-        </label>
-      {% endfor %}
-    </div>
-  </fieldset>
+<form class="panas-form" method="post" action="{{ url_for('mood_report') }}" data-panas-form>
+  <div class="panas-layout">
+    <fieldset class="panas-questionnaire">
+      <legend class="sr-only">10 项 PANAS-C-SF 心情量表</legend>
+      <div class="panas-scale-guide" aria-hidden="true">
+        <span>程度</span>
+        {% for option in panas_response_options %}
+          <span><b>{{ option.value }}</b>{{ option.label }}</span>
+        {% endfor %}
+      </div>
 
-  <div class="question-list">
-    <label class="reason-field question-field">
-      <span>1. 今天做了什么，什么影响了你的心情？</span>
-      <textarea name="day_event" rows="2" required></textarea>
-    </label>
+      <ol class="panas-item-list">
+        {% for item in panas_items %}
+          <li class="panas-item">
+            <div class="panas-item-word">
+              <span class="panas-item-number">{{ "%02d" | format(loop.index) }}</span>
+              <strong>{{ item.label }}</strong>
+            </div>
+            <div class="panas-choice-row" role="radiogroup" aria-label="{{ item.label }}的程度">
+              {% for option in panas_response_options %}
+                <label class="panas-choice" title="{{ option.label }}">
+                  <input
+                    type="radio"
+                    name="{{ item.key }}"
+                    value="{{ option.value }}"
+                    {% if submitted_responses and submitted_responses.get(item.key) == option.value|string %}checked{% endif %}
+                    required
+                  >
+                  <span aria-hidden="true">{{ option.value }}</span>
+                  <span class="sr-only">{{ option.label }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    </fieldset>
 
-    <label class="reason-field question-field">
-      <span>2. 今天身体感觉怎么样？</span>
-      <textarea name="body_feeling" rows="2" required></textarea>
-    </label>
+    <aside class="panas-score-panel" aria-live="polite">
+      <p class="panas-score-kicker">实时换算</p>
+      <div class="panas-score-dial" data-score-dial style="--score: 0">
+        <div>
+          <strong data-mood-score>--</strong>
+          <span>/ 100</span>
+        </div>
+      </div>
+      <h2>综合心情分</h2>
+      <p class="panas-score-status" data-score-status>完成 10 项后显示</p>
 
-    <label class="reason-field question-field">
-      <span>3. 还有什么想说的？</span>
-      <textarea name="extra_thoughts" rows="2"></textarea>
-    </label>
+      <dl class="panas-dimensions">
+        <div>
+          <dt>正性情绪</dt>
+          <dd><strong data-positive-score>--</strong><span>/100</span></dd>
+        </div>
+        <div>
+          <dt>负性情绪</dt>
+          <dd><strong data-negative-score>--</strong><span>/100</span></dd>
+        </div>
+      </dl>
+
+      <p class="panas-score-note">综合分是本系统的百分制换算；量表原始结果仍以正性、负性两个维度分别解释，不用于医疗诊断。</p>
+      <button class="primary-button" type="submit">保存今日量表</button>
+    </aside>
   </div>
-
-  <button class="primary-button compact" type="submit">提交心情</button>
 </form>
 {% endblock %}

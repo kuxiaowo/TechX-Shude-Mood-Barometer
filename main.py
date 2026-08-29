@@ -55,14 +55,34 @@ STATIC_DIR = BASE_DIR / "static"
 AUTH_BACKGROUND_DIR = STATIC_DIR / "login-backgrounds"
 AUTH_BACKGROUND_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-MOODS = [
-    {"emoji": "😄", "label": "开心"},
-    {"emoji": "🙂", "label": "平静"},
-    {"emoji": "😌", "label": "放松"},
-    {"emoji": "😟", "label": "担心"},
-    {"emoji": "😢", "label": "难过"},
-    {"emoji": "😡", "label": "生气"},
-]
+PANAS_ITEMS = (
+    {"key": "cheerful", "label": "愉快的", "dimension": "positive"},
+    {"key": "lively", "label": "活跃的", "dimension": "positive"},
+    {"key": "happy", "label": "快乐的", "dimension": "positive"},
+    {"key": "joyful", "label": "欣喜的", "dimension": "positive"},
+    {"key": "proud", "label": "自豪的", "dimension": "positive"},
+    {"key": "miserable", "label": "沮丧的", "dimension": "negative"},
+    {"key": "mad", "label": "生气的", "dimension": "negative"},
+    {"key": "afraid", "label": "害怕的", "dimension": "negative"},
+    {"key": "scared", "label": "受惊的", "dimension": "negative"},
+    {"key": "sad", "label": "悲伤的", "dimension": "negative"},
+)
+
+PANAS_RESPONSE_OPTIONS = (
+    {"value": 1, "label": "几乎没有"},
+    {"value": 2, "label": "比较少"},
+    {"value": 3, "label": "中等程度"},
+    {"value": 4, "label": "比较多"},
+    {"value": 5, "label": "极其多"},
+)
+
+MOOD_SCORE_BANDS = (
+    {"min": 0, "max": 19, "emoji": "😢", "label": "难过"},
+    {"min": 20, "max": 39, "emoji": "😟", "label": "担心"},
+    {"min": 40, "max": 59, "emoji": "😐", "label": "平静"},
+    {"min": 60, "max": 79, "emoji": "🙂", "label": "愉快"},
+    {"min": 80, "max": 100, "emoji": "😄", "label": "开心"},
+)
 
 GRADES = ("2024", "2025", "2026")
 PROGRAMS = ("AP", "IB")
@@ -156,6 +176,7 @@ def init_db(app: FastAPI) -> None:
                 grade TEXT NOT NULL DEFAULT '',
                 program TEXT NOT NULL DEFAULT '',
                 is_admin INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1,
                 privacy_consent_at TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
@@ -164,8 +185,10 @@ def init_db(app: FastAPI) -> None:
             CREATE TABLE IF NOT EXISTS mood_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                mood_emoji TEXT NOT NULL,
-                reason TEXT NOT NULL,
+                panas_responses TEXT NOT NULL DEFAULT '{}',
+                positive_score INTEGER NOT NULL,
+                negative_score INTEGER NOT NULL,
+                mood_score INTEGER NOT NULL,
                 entry_date TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users (id)
@@ -173,6 +196,22 @@ def init_db(app: FastAPI) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_mood_entries_user_date
                 ON mood_entries (user_id, entry_date);
+
+            CREATE TABLE IF NOT EXISTS legacy_mood_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_entry_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                mood_emoji TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                entry_date TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                archived_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                UNIQUE (user_id, source_entry_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_legacy_mood_entries_user_date
+                ON legacy_mood_entries (user_id, entry_date);
 
             CREATE TABLE IF NOT EXISTS app_settings (
                 key TEXT PRIMARY KEY,
@@ -219,6 +258,7 @@ def init_db(app: FastAPI) -> None:
             """
         )
         ensure_user_profile_columns(db)
+        ensure_panas_mood_entries_schema(db)
         ensure_default_settings(db)
         prune_old_audit_rows(db)
         promote_configured_admin(db, app.state.config.get("ADMIN_NICKNAME", ""))
@@ -235,10 +275,113 @@ def ensure_user_profile_columns(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE users ADD COLUMN program TEXT NOT NULL DEFAULT ''")
     if "is_admin" not in columns:
         db.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+    if "is_active" not in columns:
+        db.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
     if "privacy_consent_at" not in columns:
         db.execute(
             "ALTER TABLE users ADD COLUMN privacy_consent_at TEXT NOT NULL DEFAULT ''"
         )
+
+
+def ensure_panas_mood_entries_schema(db: sqlite3.Connection) -> None:
+    columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(mood_entries)").fetchall()
+    }
+    if "mood_emoji" not in columns and "reason" not in columns:
+        return
+
+    archived_at = datetime.now().isoformat(timespec="seconds")
+    legacy_rows = [
+        dict(row) for row in db.execute("SELECT * FROM mood_entries ORDER BY id")
+    ]
+    modern_values = []
+    archive_values = []
+    for row in legacy_rows:
+        mood_score = row.get("mood_score")
+        if mood_score is not None:
+            modern_values.append(
+                (
+                    row["id"],
+                    row["user_id"],
+                    row.get("panas_responses") or "{}",
+                    int(row.get("positive_score") or 0),
+                    int(row.get("negative_score") or 0),
+                    int(mood_score),
+                    row["entry_date"],
+                    row["created_at"],
+                )
+            )
+            continue
+
+        mood_emoji = str(row.get("mood_emoji") or "").strip()
+        if mood_emoji:
+            archive_values.append(
+                (
+                    row["id"],
+                    row["user_id"],
+                    mood_emoji,
+                    str(row.get("reason") or ""),
+                    row["entry_date"],
+                    row["created_at"],
+                    archived_at,
+                )
+            )
+
+    db.execute("DROP INDEX IF EXISTS idx_mood_entries_user_date")
+    db.execute("ALTER TABLE mood_entries RENAME TO mood_entries_legacy")
+    db.execute(
+        """
+        CREATE TABLE mood_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            panas_responses TEXT NOT NULL DEFAULT '{}',
+            positive_score INTEGER NOT NULL,
+            negative_score INTEGER NOT NULL,
+            mood_score INTEGER NOT NULL,
+            entry_date TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+        """
+    )
+    db.executemany(
+        """
+        INSERT INTO mood_entries (
+            id,
+            user_id,
+            panas_responses,
+            positive_score,
+            negative_score,
+            mood_score,
+            entry_date,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        modern_values,
+    )
+    db.executemany(
+        """
+        INSERT OR IGNORE INTO legacy_mood_entries (
+            source_entry_id,
+            user_id,
+            mood_emoji,
+            reason,
+            entry_date,
+            created_at,
+            archived_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        archive_values,
+    )
+    db.execute("DROP TABLE mood_entries_legacy")
+    db.execute(
+        """
+        CREATE INDEX idx_mood_entries_user_date
+            ON mood_entries (user_id, entry_date)
+        """
+    )
 
 
 def ensure_default_settings(db: sqlite3.Connection) -> None:
@@ -304,6 +447,7 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
             grade,
             program,
             is_admin,
+            is_active,
             privacy_consent_at,
             created_at
         FROM users
@@ -311,6 +455,9 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
         """,
         (user_id,),
     ).fetchone()
+    if request.state.user is not None and not request.state.user["is_active"]:
+        request.session.clear()
+        request.state.user = None
     return request.state.user
 
 
@@ -565,8 +712,10 @@ def redirect_to(
 def register_template_helpers() -> None:
     templates.env.globals["get_flashed_messages"] = get_flashed_messages
     templates.env.globals["url_for"] = template_url_for
+    templates.env.globals["score_mood"] = score_mood
     templates.env.filters["datetime_cn"] = datetime_cn
     templates.env.filters["date_cn"] = date_cn
+    templates.env.filters["panas_response_details"] = panas_response_details
     templates.env.filters["mood_reason_parts"] = mood_reason_parts
 
 
@@ -580,7 +729,9 @@ def render_template(
         request=request,
         name=template_name,
         context={
-            "moods": MOODS,
+            "panas_items": PANAS_ITEMS,
+            "panas_response_options": PANAS_RESPONSE_OPTIONS,
+            "mood_score_bands": MOOD_SCORE_BANDS,
             "grades": GRADES,
             "programs": PROGRAMS,
             "current_user": get_current_user(request),
@@ -633,19 +784,53 @@ def mood_reason_parts(value: str | None) -> list[dict[str, str]]:
         lines = [line.strip() for line in block.splitlines() if line.strip()]
         if not lines:
             continue
-
         if len(lines) == 1:
             parts.append({"question": "", "answer": lines[0]})
-            continue
+        else:
+            parts.append(
+                {
+                    "question": lines[0],
+                    "answer": "\n".join(lines[1:]),
+                }
+            )
+    return parts
 
-        parts.append(
+
+def panas_response_details(value: str | None) -> list[dict[str, Any]]:
+    try:
+        responses = json.loads(value or "{}")
+    except (TypeError, json.JSONDecodeError):
+        responses = {}
+
+    option_labels = {
+        int(option["value"]): str(option["label"])
+        for option in PANAS_RESPONSE_OPTIONS
+    }
+    details = []
+    for item in PANAS_ITEMS:
+        try:
+            score = int(responses.get(item["key"]))
+        except (TypeError, ValueError):
+            score = None
+        details.append(
             {
-                "question": lines[0],
-                "answer": "\n".join(lines[1:]),
+                **item,
+                "score": score,
+                "score_label": option_labels.get(score, "未记录"),
             }
         )
+    return details
 
-    return parts
+
+def score_mood(value: int | str | None) -> dict[str, Any]:
+    try:
+        score = max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        score = 0
+    for band in MOOD_SCORE_BANDS:
+        if band["min"] <= score <= band["max"]:
+            return band
+    return MOOD_SCORE_BANDS[-1]
 
 
 def register_routes(app: FastAPI) -> None:
@@ -847,6 +1032,19 @@ def register_routes(app: FastAPI) -> None:
                 )
                 flash(request, "昵称或密码不正确。", "error")
                 return render_template(request, "login.html")
+
+            if not user["is_active"]:
+                record_activity(
+                    request,
+                    "operation",
+                    "login_failed",
+                    status_code=403,
+                    metadata={"nickname": nickname, "reason": "account_disabled"},
+                    user_id=user["id"],
+                    user_nickname=user["nickname"],
+                )
+                flash(request, "这个账号已被停用，请联系管理员。", "error")
+                return render_template(request, "login.html", status_code=403)
 
             request.session.clear()
             request.session["user_id"] = user["id"]
@@ -1134,64 +1332,55 @@ def register_routes(app: FastAPI) -> None:
 
         if request.method == "POST":
             form = await request.form()
-            mood_emoji = str(form.get("mood_emoji", "")).strip()
-            day_event = str(form.get("day_event", "")).strip()
-            body_feeling = str(form.get("body_feeling", "")).strip()
-            extra_thoughts = str(form.get("extra_thoughts", "")).strip()
-            allowed_emojis = {mood["emoji"] for mood in MOODS}
+            responses = {
+                item["key"]: str(form.get(item["key"], "")).strip()
+                for item in PANAS_ITEMS
+            }
+            scores = calculate_panas_scores(responses)
 
-            if mood_emoji not in allowed_emojis:
+            if scores is None:
                 record_activity(
                     request,
                     "operation",
                     "mood_report_failed",
                     status_code=400,
-                    metadata={"reason": "invalid_mood"},
+                    metadata={"reason": "invalid_panas_responses"},
                     user_id=user["id"],
                     user_nickname=user["nickname"],
                 )
-                flash(request, "请选择一个心情 emoji。", "error")
+                flash(request, "请完成全部 10 项，每项选择 1 至 5。", "error")
                 return render_template(
                     request,
                     "mood_report.html",
                     {
                         "active_page": "mood_report",
                         "recent_entries": get_recent_entries(request, user["id"]),
+                        "submitted_responses": responses,
                     },
-                )
-
-            if not day_event or not body_feeling:
-                record_activity(
-                    request,
-                    "operation",
-                    "mood_report_failed",
                     status_code=400,
-                    metadata={"reason": "missing_answers"},
-                    user_id=user["id"],
-                    user_nickname=user["nickname"],
-                )
-                flash(request, "请回答前两个问题。", "error")
-                return render_template(
-                    request,
-                    "mood_report.html",
-                    {
-                        "active_page": "mood_report",
-                        "recent_entries": get_recent_entries(request, user["id"]),
-                    },
                 )
 
-            reason = build_mood_reason(day_event, body_feeling, extra_thoughts)
             now = datetime.now()
             get_db(request).execute(
                 """
                 INSERT INTO mood_entries
-                    (user_id, mood_emoji, reason, entry_date, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                    (
+                        user_id,
+                        panas_responses,
+                        positive_score,
+                        negative_score,
+                        mood_score,
+                        entry_date,
+                        created_at
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["id"],
-                    mood_emoji,
-                    reason,
+                    json.dumps(scores["responses"], ensure_ascii=False),
+                    scores["positive_score"],
+                    scores["negative_score"],
+                    scores["mood_score"],
                     date.today().isoformat(),
                     now.isoformat(timespec="seconds"),
                 ),
@@ -1204,12 +1393,14 @@ def register_routes(app: FastAPI) -> None:
                 status_code=302,
                 metadata={
                     "entry_date": date.today().isoformat(),
-                    "mood_emoji": mood_emoji,
+                    "positive_score": scores["positive_score"],
+                    "negative_score": scores["negative_score"],
+                    "mood_score": scores["mood_score"],
                 },
                 user_id=user["id"],
                 user_nickname=user["nickname"],
             )
-            flash(request, "今天的心情已经记录。", "success")
+            flash(request, f"量表已提交，今日综合心情分为 {scores['mood_score']} 分。", "success")
             return redirect_to(request, "mood_calendar")
 
         return render_template(
@@ -1230,6 +1421,17 @@ def register_routes(app: FastAPI) -> None:
         selected_month = parse_month(request.query_params.get("month"))
         rows, month_entries = build_calendar(request, user["id"], selected_month)
         prev_month, next_month = adjacent_months(selected_month)
+        scored_month_entries = [
+            entry for entry in month_entries if entry["record_type"] == "panas"
+        ]
+        month_average = (
+            round(
+                sum(entry["mood_score"] for entry in scored_month_entries)
+                / len(scored_month_entries)
+            )
+            if scored_month_entries
+            else None
+        )
         return render_template(
             request,
             "mood_calendar.html",
@@ -1240,6 +1442,27 @@ def register_routes(app: FastAPI) -> None:
                 "next_month": next_month,
                 "calendar_rows": rows,
                 "month_entries": month_entries,
+                "month_average": month_average,
+                "month_archive_count": sum(
+                    entry["record_type"] == "legacy" for entry in month_entries
+                ),
+                "recent_entries": get_recent_entries(request, user["id"]),
+            },
+        )
+
+    @app.get("/mood-trends", name="mood_trends")
+    async def mood_trends(request: Request):
+        user = require_user(request)
+        if isinstance(user, RedirectResponse):
+            return user
+
+        return render_template(
+            request,
+            "mood_trends.html",
+            {
+                "active_page": "mood_trends",
+                "week_chart": get_mood_chart_data(request, user["id"], 7),
+                "month_chart": get_mood_chart_data(request, user["id"], 30),
                 "recent_entries": get_recent_entries(request, user["id"]),
             },
         )
@@ -1256,6 +1479,7 @@ def register_routes(app: FastAPI) -> None:
             {
                 "active_page": "mood_history",
                 "entries": get_user_entries(request, user["id"]),
+                "legacy_entries": get_legacy_user_entries(request, user["id"]),
                 "recent_entries": get_recent_entries(request, user["id"]),
             },
         )
@@ -1274,6 +1498,7 @@ def register_routes(app: FastAPI) -> None:
             {
                 "active_page": "admin_dashboard",
                 "users": users,
+                "admin_stats": get_admin_stats(request),
                 "search_query": search_query,
                 "recent_entries": [],
             },
@@ -1285,7 +1510,7 @@ def register_routes(app: FastAPI) -> None:
         if isinstance(user, RedirectResponse):
             return user
 
-        target_user, entries = get_admin_user_detail(request, user_id)
+        target_user, entries, legacy_entries = get_admin_user_detail(request, user_id)
         if target_user is None:
             flash(request, "没有找到这个用户。", "error")
             return redirect_to(request, "admin_dashboard")
@@ -1297,6 +1522,9 @@ def register_routes(app: FastAPI) -> None:
                 "active_page": "admin_dashboard",
                 "target_user": target_user,
                 "entries": entries,
+                "legacy_entries": legacy_entries,
+                "week_chart": get_mood_chart_data(request, user_id, 7),
+                "month_chart": get_mood_chart_data(request, user_id, 30),
                 "recent_entries": [],
             },
         )
@@ -1492,6 +1720,10 @@ def register_routes(app: FastAPI) -> None:
             target_params,
         )
         db.execute(
+            f"DELETE FROM legacy_mood_entries WHERE user_id IN ({target_placeholders})",
+            target_params,
+        )
+        db.execute(
             f"""
             UPDATE registration_attempts
             SET user_id = NULL
@@ -1533,12 +1765,14 @@ def register_routes(app: FastAPI) -> None:
         flash(request, message, "success")
         return redirect_to(request, "admin_dashboard")
 
-    @app.post("/admin/users/{user_id}/admin", name="promote_admin")
-    async def promote_admin(request: Request, user_id: int):
+    @app.post("/admin/users/{user_id}/role", name="update_user_role")
+    async def update_user_role(request: Request, user_id: int):
         user = require_admin(request)
         if isinstance(user, RedirectResponse):
             return user
 
+        form = await request.form()
+        role = str(form.get("role", "")).strip()
         target_user = get_db(request).execute(
             "SELECT id, nickname, is_admin FROM users WHERE id = ?",
             (user_id,),
@@ -1547,36 +1781,86 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "没有找到这个用户。", "error")
             return redirect_to(request, "admin_dashboard")
 
-        if target_user["is_admin"]:
-            record_activity(
-                request,
-                "operation",
-                "admin_promote_skipped",
-                status_code=302,
-                metadata={"target_user_id": user_id, "reason": "already_admin"},
-                user_id=user["id"],
-                user_nickname=user["nickname"],
-            )
-            flash(request, "这个用户已经是管理员。", "success")
-        else:
-            get_db(request).execute(
-                "UPDATE users SET is_admin = 1 WHERE id = ?",
-                (user_id,),
-            )
-            get_db(request).commit()
-            record_activity(
-                request,
-                "operation",
-                "admin_promoted_user",
-                status_code=302,
-                metadata={
-                    "target_user_id": user_id,
-                    "target_nickname": target_user["nickname"],
-                },
-                user_id=user["id"],
-                user_nickname=user["nickname"],
-            )
-            flash(request, f"已将 @{target_user['nickname']} 设置为管理员。", "success")
+        if role not in {"admin", "member"}:
+            flash(request, "请选择有效的用户角色。", "error")
+            return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
+        if user_id == user["id"] and role != "admin":
+            flash(request, "不能取消当前登录账号的管理员权限。", "error")
+            return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
+
+        is_admin = 1 if role == "admin" else 0
+        get_db(request).execute(
+            "UPDATE users SET is_admin = ? WHERE id = ?",
+            (is_admin, user_id),
+        )
+        get_db(request).commit()
+        record_activity(
+            request,
+            "operation",
+            "admin_updated_user_role",
+            status_code=302,
+            metadata={
+                "target_user_id": user_id,
+                "target_nickname": target_user["nickname"],
+                "role": role,
+            },
+            user_id=user["id"],
+            user_nickname=user["nickname"],
+        )
+        flash(
+            request,
+            f"已将 @{target_user['nickname']} 设为{'管理员' if is_admin else '普通用户'}。",
+            "success",
+        )
+
+        return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
+
+    @app.post("/admin/users/{user_id}/status", name="update_user_status")
+    async def update_user_status(request: Request, user_id: int):
+        user = require_admin(request)
+        if isinstance(user, RedirectResponse):
+            return user
+
+        form = await request.form()
+        status = str(form.get("status", "")).strip()
+        target_user = get_db(request).execute(
+            "SELECT id, nickname, is_active FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if target_user is None:
+            flash(request, "没有找到这个用户。", "error")
+            return redirect_to(request, "admin_dashboard")
+        if status not in {"active", "disabled"}:
+            flash(request, "请选择有效的账号状态。", "error")
+            return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
+        if user_id == user["id"] and status == "disabled":
+            flash(request, "不能停用当前登录的管理员账号。", "error")
+            return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
+
+        is_active = 1 if status == "active" else 0
+        get_db(request).execute(
+            "UPDATE users SET is_active = ? WHERE id = ?",
+            (is_active, user_id),
+        )
+        get_db(request).commit()
+        record_activity(
+            request,
+            "operation",
+            "admin_updated_user_status",
+            status_code=302,
+            metadata={
+                "target_user_id": user_id,
+                "target_nickname": target_user["nickname"],
+                "status": status,
+            },
+            user_id=user["id"],
+            user_nickname=user["nickname"],
+        )
+        flash(
+            request,
+            f"@{target_user['nickname']} 已{'启用' if is_active else '停用'}。",
+            "success",
+        )
 
         return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
 
@@ -1589,15 +1873,39 @@ def sql_placeholders(values: list[int]) -> str:
     return ",".join("?" for _ in values)
 
 
-def build_mood_reason(day_event: str, body_feeling: str, extra_thoughts: str) -> str:
-    answers = [
-        ("今天做了什么，什么影响了你的心情？", day_event),
-        ("今天身体感觉怎么样？", body_feeling),
-    ]
-    if extra_thoughts:
-        answers.append(("还有什么想说的？", extra_thoughts))
+def calculate_panas_scores(responses: dict[str, str]) -> dict[str, Any] | None:
+    expected_keys = {item["key"] for item in PANAS_ITEMS}
+    if set(responses) != expected_keys:
+        return None
 
-    return "\n\n".join(f"{question}\n{answer}" for question, answer in answers)
+    try:
+        numeric_responses = {key: int(value) for key, value in responses.items()}
+    except (TypeError, ValueError):
+        return None
+
+    if any(value < 1 or value > 5 for value in numeric_responses.values()):
+        return None
+
+    positive_sum = sum(
+        numeric_responses[item["key"]]
+        for item in PANAS_ITEMS
+        if item["dimension"] == "positive"
+    )
+    negative_sum = sum(
+        numeric_responses[item["key"]]
+        for item in PANAS_ITEMS
+        if item["dimension"] == "negative"
+    )
+    positive_score = (positive_sum - 5) * 5
+    negative_score = (negative_sum - 5) * 5
+    mood_score = (positive_score + 100 - negative_score + 1) // 2
+
+    return {
+        "responses": numeric_responses,
+        "positive_score": positive_score,
+        "negative_score": negative_score,
+        "mood_score": mood_score,
+    }
 
 
 def get_recent_entries(
@@ -1607,7 +1915,14 @@ def get_recent_entries(
 ) -> list[sqlite3.Row]:
     return get_db(request).execute(
         """
-        SELECT id, mood_emoji, reason, entry_date, created_at
+        SELECT
+            id,
+            panas_responses,
+            positive_score,
+            negative_score,
+            mood_score,
+            entry_date,
+            created_at
         FROM mood_entries
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
@@ -1620,13 +1935,100 @@ def get_recent_entries(
 def get_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]:
     return get_db(request).execute(
         """
-        SELECT id, mood_emoji, reason, entry_date, created_at
+        SELECT
+            id,
+            panas_responses,
+            positive_score,
+            negative_score,
+            mood_score,
+            entry_date,
+            created_at
         FROM mood_entries
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
         """,
         (user_id,),
     ).fetchall()
+
+
+def get_legacy_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]:
+    return get_db(request).execute(
+        """
+        SELECT
+            id,
+            source_entry_id,
+            user_id,
+            mood_emoji,
+            reason,
+            entry_date,
+            created_at,
+            archived_at
+        FROM legacy_mood_entries
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+
+
+def get_mood_chart_data(
+    request: Request,
+    user_id: int,
+    days: int,
+) -> list[dict[str, Any]]:
+    start_date = date.today() - timedelta(days=days - 1)
+    entries = get_db(request).execute(
+        """
+        SELECT
+            mood_score,
+            positive_score,
+            negative_score,
+            entry_date,
+            created_at,
+            id
+        FROM mood_entries
+        WHERE user_id = ? AND entry_date BETWEEN ? AND ?
+        ORDER BY entry_date ASC, created_at ASC, id ASC
+        """,
+        (user_id, start_date.isoformat(), date.today().isoformat()),
+    ).fetchall()
+
+    latest_by_day = {entry["entry_date"]: entry for entry in entries}
+    chart_data = []
+    for offset in range(days):
+        chart_date = start_date + timedelta(days=offset)
+        entry = latest_by_day.get(chart_date.isoformat())
+        chart_data.append(
+            {
+                "date": chart_date.isoformat(),
+                "label": f"{chart_date.month}/{chart_date.day}",
+                "score": entry["mood_score"] if entry else None,
+                "positive": entry["positive_score"] if entry else None,
+                "negative": entry["negative_score"] if entry else None,
+            }
+        )
+    return chart_data
+
+
+def get_admin_stats(request: Request) -> dict[str, int]:
+    row = get_db(request).execute(
+        """
+        SELECT
+            COUNT(*) AS user_count,
+            SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active_count,
+            SUM(CASE WHEN is_admin = 1 THEN 1 ELSE 0 END) AS admin_count
+        FROM users
+        """
+    ).fetchone()
+    entry_count = get_db(request).execute(
+        "SELECT COUNT(*) AS count FROM mood_entries"
+    ).fetchone()["count"]
+    return {
+        "user_count": int(row["user_count"] or 0),
+        "active_count": int(row["active_count"] or 0),
+        "admin_count": int(row["admin_count"] or 0),
+        "entry_count": int(entry_count or 0),
+    }
 
 
 def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Row]:
@@ -1638,11 +2040,26 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
         users.grade,
         users.program,
         users.is_admin,
+        users.is_active,
         users.created_at,
-        COUNT(mood_entries.id) AS entry_count,
-        MAX(mood_entries.created_at) AS latest_entry_at
+        (
+            SELECT COUNT(*) FROM mood_entries
+            WHERE mood_entries.user_id = users.id
+        ) + (
+            SELECT COUNT(*) FROM legacy_mood_entries
+            WHERE legacy_mood_entries.user_id = users.id
+        ) AS entry_count,
+        (
+            SELECT MAX(created_at)
+            FROM (
+                SELECT created_at FROM mood_entries
+                WHERE mood_entries.user_id = users.id
+                UNION ALL
+                SELECT created_at FROM legacy_mood_entries
+                WHERE legacy_mood_entries.user_id = users.id
+            )
+        ) AS latest_entry_at
     FROM users
-    LEFT JOIN mood_entries ON mood_entries.user_id = users.id
     """
     params: tuple[str, ...] = ()
     if search_query:
@@ -1658,7 +2075,6 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
         params = (like_query, nickname_query, like_query, like_query, like_query)
 
     sql += """
-    GROUP BY users.id
     ORDER BY users.created_at DESC, users.id DESC
     """
     return get_db(request).execute(sql, params).fetchall()
@@ -1667,7 +2083,7 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
 def get_admin_user_detail(
     request: Request,
     user_id: int,
-) -> tuple[sqlite3.Row | None, list[sqlite3.Row]]:
+) -> tuple[sqlite3.Row | None, list[sqlite3.Row], list[sqlite3.Row]]:
     db = get_db(request)
     user = db.execute(
         """
@@ -1678,22 +2094,44 @@ def get_admin_user_detail(
             users.grade,
             users.program,
             users.is_admin,
+            users.is_active,
             users.created_at,
-            COUNT(mood_entries.id) AS entry_count,
-            MAX(mood_entries.created_at) AS latest_entry_at
+            (
+                SELECT COUNT(*) FROM mood_entries
+                WHERE mood_entries.user_id = users.id
+            ) + (
+                SELECT COUNT(*) FROM legacy_mood_entries
+                WHERE legacy_mood_entries.user_id = users.id
+            ) AS entry_count,
+            (
+                SELECT MAX(created_at)
+                FROM (
+                    SELECT created_at FROM mood_entries
+                    WHERE mood_entries.user_id = users.id
+                    UNION ALL
+                    SELECT created_at FROM legacy_mood_entries
+                    WHERE legacy_mood_entries.user_id = users.id
+                )
+            ) AS latest_entry_at
         FROM users
-        LEFT JOIN mood_entries ON mood_entries.user_id = users.id
         WHERE users.id = ?
-        GROUP BY users.id
         """,
         (user_id,),
     ).fetchone()
     if user is None:
-        return None, []
+        return None, [], []
 
     entries = db.execute(
         """
-        SELECT id, user_id, mood_emoji, reason, entry_date, created_at
+        SELECT
+            id,
+            user_id,
+            panas_responses,
+            positive_score,
+            negative_score,
+            mood_score,
+            entry_date,
+            created_at
         FROM mood_entries
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
@@ -1701,7 +2139,8 @@ def get_admin_user_detail(
         (user_id,),
     ).fetchall()
 
-    return user, entries
+    legacy_entries = get_legacy_user_entries(request, user_id)
+    return user, entries, legacy_entries
 
 
 def get_activity_user_target(request: Request, user_key: str) -> dict[str, Any]:
@@ -1927,9 +2366,17 @@ def build_calendar(request: Request, user_id: int, selected_month: date):
     _, days_in_month = calendar.monthrange(first_day.year, first_day.month)
     last_day = date(first_day.year, first_day.month, days_in_month)
 
-    entries = get_db(request).execute(
+    db = get_db(request)
+    entries = db.execute(
         """
-        SELECT id, mood_emoji, reason, entry_date, created_at
+        SELECT
+            id,
+            panas_responses,
+            positive_score,
+            negative_score,
+            mood_score,
+            entry_date,
+            created_at
         FROM mood_entries
         WHERE user_id = ? AND entry_date BETWEEN ? AND ?
         ORDER BY entry_date ASC, id ASC
@@ -1937,9 +2384,33 @@ def build_calendar(request: Request, user_id: int, selected_month: date):
         (user_id, first_day.isoformat(), last_day.isoformat()),
     ).fetchall()
 
-    latest_by_day: dict[str, sqlite3.Row] = {}
+    legacy_entries = db.execute(
+        """
+        SELECT
+            id,
+            source_entry_id,
+            mood_emoji,
+            reason,
+            entry_date,
+            created_at
+        FROM legacy_mood_entries
+        WHERE user_id = ? AND entry_date BETWEEN ? AND ?
+        ORDER BY entry_date ASC, created_at ASC, id ASC
+        """,
+        (user_id, first_day.isoformat(), last_day.isoformat()),
+    ).fetchall()
+
+    latest_by_day: dict[str, dict[str, Any]] = {}
+    for entry in legacy_entries:
+        latest_by_day[entry["entry_date"]] = {
+            **dict(entry),
+            "record_type": "legacy",
+        }
     for entry in entries:
-        latest_by_day[entry["entry_date"]] = entry
+        latest_by_day[entry["entry_date"]] = {
+            **dict(entry),
+            "record_type": "panas",
+        }
 
     month_entries = list(latest_by_day.values())
     month_days = calendar.Calendar(firstweekday=0).monthdatescalendar(

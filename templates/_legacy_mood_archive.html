@@ -1,0 +1,36 @@
+{% if legacy_entries %}
+  <header class="legacy-archive-heading">
+    <div>
+      <p class="eyebrow">不计入趋势统计</p>
+      <h2>旧版心情存档</h2>
+    </div>
+    <span>{{ legacy_entries|length }} 条</span>
+  </header>
+  {% for entry in legacy_entries %}
+    <article class="history-entry legacy-entry" id="legacy-entry-{{ entry['id'] }}">
+      <div class="admin-entry-heading">
+        <span class="legacy-entry-emoji" aria-hidden="true">{{ entry["mood_emoji"] }}</span>
+        <div>
+          <div class="legacy-entry-title">
+            <strong>{{ entry["entry_date"] }}</strong>
+            <span>历史存档</span>
+          </div>
+          <span class="admin-entry-time">{{ entry["created_at"] | datetime_cn }}</span>
+        </div>
+      </div>
+      {% set reason_parts = entry["reason"] | mood_reason_parts %}
+      {% if reason_parts %}
+        <div class="legacy-reason-parts">
+          {% for part in reason_parts %}
+            <section>
+              {% if part.question %}<span>{{ part.question }}</span>{% endif %}
+              <p>{{ part.answer }}</p>
+            </section>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted legacy-no-detail">旧版记录没有留下文字内容。</p>
+      {% endif %}
+    </article>
+  {% endfor %}
+{% endif %}

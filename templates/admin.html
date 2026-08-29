@@ -1,12 +1,22 @@
-{% extends "dashboard.html" %}
+{% extends "admin_base.html" %}
 
 {% block title %}管理员后台 - TechX心情晴雨表{% endblock %}
 {% block content_card_class %}adaptive-scroll-card{% endblock %}
 
 {% block content %}
-<section class="page-heading">
-  <p class="eyebrow">管理员后台</p>
-  <h1>用户列表</h1>
+<section class="admin-console-heading">
+  <div>
+    <p class="eyebrow">Control room</p>
+    <h1>用户管理</h1>
+    <p>在一个界面里查看用户状态、量表记录并执行账号控制。</p>
+  </div>
+</section>
+
+<section class="admin-console-stats" aria-label="管理概览">
+  <div><span>全部用户</span><strong>{{ admin_stats.user_count }}</strong></div>
+  <div><span>启用账号</span><strong>{{ admin_stats.active_count }}</strong></div>
+  <div><span>管理员</span><strong>{{ admin_stats.admin_count }}</strong></div>
+  <div><span>量表记录</span><strong>{{ admin_stats.entry_count }}</strong></div>
 </section>
 
 <form class="admin-search-form" method="get" action="{{ url_for('admin_dashboard') }}">
@@ -24,23 +34,6 @@
     <a class="outline-button admin-search-clear" href="{{ url_for('admin_dashboard') }}">清空</a>
   {% endif %}
 </form>
-
-<section class="admin-summary" aria-label="后台概览">
-  <div>
-    <span>{% if search_query %}匹配用户数{% else %}用户数{% endif %}</span>
-    <strong>{{ users|length }}</strong>
-  </div>
-  <div>
-    <span>记录数</span>
-    <strong>
-      {% set total_entries = namespace(value=0) %}
-      {% for user in users %}
-        {% set total_entries.value = total_entries.value + user["entry_count"] %}
-      {% endfor %}
-      {{ total_entries.value }}
-    </strong>
-  </div>
-</section>
 
 <form
   class="admin-bulk-form"
@@ -77,6 +70,9 @@
                 {% if user["is_admin"] %}
                   <span class="admin-badge">管理员</span>
                 {% endif %}
+                <span class="account-status-badge {% if user['is_active'] %}is-active{% else %}is-disabled{% endif %}">
+                  {{ "启用" if user["is_active"] else "已停用" }}
+                </span>
               </div>
               <div class="admin-user-row-meta">
                 <span>{{ user["entry_count"] }} 条记录</span>

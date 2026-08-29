@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from main import MOODS, create_app, get_client_ip
+from main import (
+    PANAS_ITEMS,
+    calculate_panas_scores,
+    create_app,
+    get_client_ip,
+    score_mood,
+)
 
 
 @pytest.fixture()
@@ -291,6 +297,13 @@ def test_forwarded_for_is_trusted_only_from_local_proxy():
         "127.0.0.1",
         {"x-forwarded-for": "203.0.113.10, 10.0.0.1"},
     )
+
+
+def panas_data(positive=4, negative=2):
+    return {
+        item["key"]: str(positive if item["dimension"] == "positive" else negative)
+        for item in PANAS_ITEMS
+    }
     untrusted_client = FakeRequest(
         "198.51.100.20",
         {"x-forwarded-for": "203.0.113.11"},
@@ -504,6 +517,7 @@ def test_existing_user_without_privacy_consent_gets_login_modal(app, client):
         "/profile",
         "/mood-report",
         "/mood-calendar",
+        "/mood-trends",
         "/mood-history",
         "/admin",
         "/admin/users/1",
@@ -520,12 +534,7 @@ def test_first_registered_user_can_view_admin_dashboard(app, client):
     register(client, nickname="admin-user", real_name="管理员")
     client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "😄",
-            "day_event": "检查后台",
-            "body_feeling": "状态稳定",
-            "extra_thoughts": "",
-        },
+        data=panas_data(),
         follow_redirects=True,
     )
     client.post("/logout")
@@ -540,27 +549,25 @@ def test_first_registered_user_can_view_admin_dashboard(app, client):
     )
     client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "🙂",
-            "day_event": "完成作业",
-            "body_feeling": "有点累",
-            "extra_thoughts": "想早点休息",
-        },
+        data=panas_data(positive=3, negative=3),
         follow_redirects=True,
     )
     client.post("/logout")
 
     response = login(client, nickname="admin-user")
-    assert "管理员后台" in response.text
-    assert 'href="/admin/activity"' in response.text
-    assert 'href="/admin/settings"' in response.text
+    assert "管理控制台" in response.text
+    assert 'href="/admin"' in response.text
+    assert 'href="/admin/activity"' not in response.text
+    assert 'href="/admin/settings"' not in response.text
     assert "进入后台" not in response.text
-    assert "reason-question" in response.text
-    assert "reason-answer" in response.text
+    assert "recent-score" in response.text
+    assert "recent-score-meta" in response.text
 
     dashboard = client.get("/admin")
     assert dashboard.status_code == 200
-    assert "用户列表" in dashboard.text
+    assert "用户管理" in dashboard.text
+    assert "管理控制台" in dashboard.text
+    assert "返回用户端" in dashboard.text
     assert "搜索用户" in dashboard.text
     assert "admin-user-row" in dashboard.text
     assert "admin-user" in dashboard.text
@@ -582,10 +589,10 @@ def test_first_registered_user_can_view_admin_dashboard(app, client):
     assert student_detail.status_code == 200
     assert "用户心情记录" in student_detail.text
     assert "student" in student_detail.text
-    assert "完成作业" in student_detail.text
-    assert "检查后台" not in student_detail.text
-    assert "reason-question" in student_detail.text
-    assert "reason-answer" in student_detail.text
+    assert "entry-score-grid" in student_detail.text
+    assert "综合心情" in student_detail.text
+    assert "正性情绪" in student_detail.text
+    assert "负性情绪" in student_detail.text
 
     filtered = client.get("/admin?q=student")
     filtered_panel = admin_user_panel(filtered.text)
@@ -613,7 +620,7 @@ def test_non_admin_user_cannot_view_admin_dashboard(client):
     response = client.get("/admin", follow_redirects=True)
 
     assert "只有管理员可以访问后台" in response.text
-    assert "用户列表" not in response.text
+    assert "用户管理" not in response.text
 
     settings = client.get("/admin/settings", follow_redirects=True)
     activity = client.get("/admin/activity", follow_redirects=True)
@@ -621,7 +628,7 @@ def test_non_admin_user_cannot_view_admin_dashboard(client):
     assert "activity-log-entry" not in activity.text
 
 
-def test_admin_can_promote_user_to_admin(app, client):
+def test_admin_can_change_user_role(app, client):
     register(client, nickname="admin-user", real_name="管理员")
     client.post("/logout")
     register(client, nickname="student", real_name="李四")
@@ -633,16 +640,16 @@ def test_admin_can_promote_user_to_admin(app, client):
 
     detail = client.get(f"/admin/users/{student_id}")
     assert detail.status_code == 200
-    assert "设为管理员" in detail.text
+    assert "更新角色" in detail.text
 
     response = client.post(
-        f"/admin/users/{student_id}/admin",
+        f"/admin/users/{student_id}/role",
+        data={"role": "admin"},
         follow_redirects=True,
     )
 
     assert response.status_code == 200
-    assert "已将 @student 设置为管理员" in response.text
-    assert "设为管理员" not in response.text
+    assert "已将 @student 设为管理员" in response.text
     assert "管理员" in response.text
 
     promoted = rows(
@@ -652,12 +659,57 @@ def test_admin_can_promote_user_to_admin(app, client):
     )[0]
     assert promoted["is_admin"] == 1
 
-    repeated = client.post(
-        f"/admin/users/{student_id}/admin",
+    demoted = client.post(
+        f"/admin/users/{student_id}/role",
+        data={"role": "member"},
         follow_redirects=True,
     )
-    assert repeated.status_code == 200
-    assert "这个用户已经是管理员" in repeated.text
+    assert demoted.status_code == 200
+    assert "已将 @student 设为普通用户" in demoted.text
+    assert rows(app, "SELECT is_admin FROM users WHERE id = ?", (student_id,))[0][
+        "is_admin"
+    ] == 0
+
+
+def test_admin_can_disable_and_enable_user_account(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    register(client, nickname="student", password="student-pw", real_name="李四")
+    client.post("/logout")
+    login(client, nickname="admin-user")
+
+    student_id = rows(
+        app,
+        "SELECT id FROM users WHERE nickname = 'student'",
+    )[0]["id"]
+    disabled = client.post(
+        f"/admin/users/{student_id}/status",
+        data={"status": "disabled"},
+        follow_redirects=True,
+    )
+    assert "@student 已停用" in disabled.text
+    assert rows(app, "SELECT is_active FROM users WHERE id = ?", (student_id,))[0][
+        "is_active"
+    ] == 0
+
+    client.post("/logout")
+    denied = login(client, nickname="student", password="student-pw")
+    assert denied.status_code == 403
+    assert "账号已被停用" in denied.text
+
+    login(client, nickname="admin-user")
+    enabled = client.post(
+        f"/admin/users/{student_id}/status",
+        data={"status": "active"},
+        follow_redirects=True,
+    )
+    assert "@student 已启用" in enabled.text
+    client.post("/logout")
+    assert "用户详情" in login(
+        client,
+        nickname="student",
+        password="student-pw",
+    ).text
 
 
 def test_admin_can_bulk_delete_users_and_related_data(app, client):
@@ -666,12 +718,7 @@ def test_admin_can_bulk_delete_users_and_related_data(app, client):
     register(client, nickname="student", real_name="李四")
     client.post(
         "/mood-report",
-        data={
-            "mood_emoji": MOODS[0]["emoji"],
-            "day_event": "需要删除",
-            "body_feeling": "还可以",
-            "extra_thoughts": "",
-        },
+        data=panas_data(),
         follow_redirects=True,
     )
     client.post("/logout")
@@ -685,6 +732,33 @@ def test_admin_can_bulk_delete_users_and_related_data(app, client):
         for row in user_rows
         if row["nickname"] in {"student", "other"}
     ]
+    student_id = next(
+        row["id"] for row in user_rows if row["nickname"] == "student"
+    )
+    execute(
+        app,
+        """
+        INSERT INTO legacy_mood_entries (
+            source_entry_id,
+            user_id,
+            mood_emoji,
+            reason,
+            entry_date,
+            created_at,
+            archived_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            9001,
+            student_id,
+            "😌",
+            "旧版存档",
+            "2025-01-01",
+            "2025-01-01T12:00:00",
+            "2026-01-01T12:00:00",
+        ),
+    )
     response = client.post(
         "/admin/users/delete",
         data={"user_ids": [str(user_id) for user_id in target_ids]},
@@ -695,6 +769,7 @@ def test_admin_can_bulk_delete_users_and_related_data(app, client):
     remaining_users = rows(app, "SELECT nickname FROM users ORDER BY id")
     assert [row["nickname"] for row in remaining_users] == ["admin-user"]
     assert rows(app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 0
+    assert rows(app, "SELECT COUNT(*) AS count FROM legacy_mood_entries")[0]["count"] == 0
     assert all(
         row["user_id"] is None
         for row in rows(
@@ -760,12 +835,7 @@ def test_admin_activity_logs_key_actions_and_filters_static_assets(app, client):
     login(client, nickname="admin-user")
     client.post(
         "/mood-report",
-        data={
-            "mood_emoji": MOODS[0]["emoji"],
-            "day_event": "检查动态",
-            "body_feeling": "还可以",
-            "extra_thoughts": "不记录正文",
-        },
+        data=panas_data(),
         follow_redirects=True,
     )
     client.post(
@@ -792,7 +862,7 @@ def test_admin_activity_logs_key_actions_and_filters_static_assets(app, client):
     assert not rows(
         app,
         "SELECT id FROM activity_logs WHERE metadata LIKE ?",
-        ("%不记录正文%",),
+        ("%cheerful%",),
     )
 
     activity_page = client.get("/admin/activity")
@@ -933,7 +1003,7 @@ def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
     assert "other_action" not in keyword_filtered.text
 
 
-def test_non_admin_user_cannot_promote_users(app, client):
+def test_non_admin_user_cannot_control_users(app, client):
     register(client, nickname="admin-user")
     client.post("/logout")
     register(client, nickname="student")
@@ -941,7 +1011,8 @@ def test_non_admin_user_cannot_promote_users(app, client):
     admin_id = users[0]["id"]
 
     response = client.post(
-        f"/admin/users/{admin_id}/admin",
+        f"/admin/users/{admin_id}/role",
+        data={"role": "member"},
         follow_redirects=True,
     )
 
@@ -1057,41 +1128,46 @@ def test_update_password_requires_current_password_and_updates_hash(app, client)
     assert rows(app, "SELECT password_hash FROM users")[0]["password_hash"] != "pw"
 
 
-def test_mood_submission_keeps_history_and_calendar_uses_latest_emoji_only(
+def test_mood_submission_keeps_history_and_calendar_uses_latest_score_only(
     app, client
 ):
     register(client)
 
     first = client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "🙂",
-            "day_event": "第一条记录",
-            "body_feeling": "身体状态还可以",
-            "extra_thoughts": "",
-        },
+        data=panas_data(positive=5, negative=2),
         follow_redirects=True,
     )
     assert first.status_code == 200
 
     second = client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "😌",
-            "day_event": "第二条记录",
-            "body_feeling": "有点累",
-            "extra_thoughts": "想早点睡",
-        },
+        data=panas_data(positive=2, negative=4),
         follow_redirects=True,
     )
     html = second.text
     grid_html = calendar_grid(html)
 
-    assert "😌" in grid_html
-    assert "🙂" not in grid_html
-    assert "第一条记录" not in grid_html
-    assert "第二条记录" not in grid_html
+    assert 'style="--score: 25"' in grid_html
+    assert 'style="--score: 88"' not in grid_html
+    assert "😟" in grid_html
+    assert "😄" not in grid_html
     assert rows(app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 2
+
+    profile = client.get("/profile")
+    assert "data-mood-chart" not in profile.text
+    assert 'href="/mood-trends"' in profile.text
+
+    calendar = client.get("/mood-calendar")
+    assert "data-mood-chart" not in calendar.text
+    assert "calendar-scroll-card" in calendar.text
+
+    trends = client.get("/mood-trends")
+    assert trends.status_code == 200
+    assert trends.text.count("data-mood-chart") == 2
+    assert '"score": 25' in trends.text
+    assert '"score": 88' not in trends.text
+    assert 'class="nav-item is-active" href="/mood-trends"' in trends.text
 
 
 def test_recent_sidebar_limits_to_three_and_history_page_shows_all(app, client):
@@ -1100,27 +1176,19 @@ def test_recent_sidebar_limits_to_three_and_history_page_shows_all(app, client):
     for index in range(1, 6):
         client.post(
             "/mood-report",
-            data={
-                "mood_emoji": "😄",
-                "day_event": f"历史记录 {index}",
-                "body_feeling": f"身体感受 {index}",
-                "extra_thoughts": "",
-            },
+            data=panas_data(positive=index, negative=3),
             follow_redirects=True,
         )
 
     profile = client.get("/profile")
     assert "查看历史" in profile.text
-    assert "历史记录 5" in profile.text
-    assert "历史记录 4" in profile.text
-    assert "历史记录 3" in profile.text
-    assert "历史记录 2" not in profile.text
-    assert "历史记录 1" not in profile.text
+    assert profile.text.count('class="recent-score"') == 3
 
     history = client.get("/mood-history")
     assert history.status_code == 200
-    for index in range(1, 6):
-        assert f"历史记录 {index}" in history.text
+    assert history.text.count('class="history-entry"') == 5
+    for item in PANAS_ITEMS:
+        assert item["label"] in history.text
 
     latest_entry = rows(app, "SELECT id FROM mood_entries ORDER BY id DESC LIMIT 1")[0]
     assert f'id="entry-{latest_entry["id"]}"' in history.text
@@ -1158,20 +1226,10 @@ def test_scroll_lists_adapt_to_available_card_height_and_calendar_links_have_no_
     history_flex_rule = styles[history_flex_rule_start:history_flex_rule_end]
     assert "flex: 1 1 auto;" in history_flex_rule
 
-    recent_emoji_rule_start = styles.index(".recent-emoji {")
-    recent_emoji_rule_end = styles.index("}", recent_emoji_rule_start)
-    recent_emoji_rule = styles[recent_emoji_rule_start:recent_emoji_rule_end]
-    assert "place-items: center;" in recent_emoji_rule
-
-    emoji_glyph_rule_start = styles.index(".emoji-glyph {")
-    emoji_glyph_rule_end = styles.index("}", emoji_glyph_rule_start)
-    emoji_glyph_rule = styles[emoji_glyph_rule_start:emoji_glyph_rule_end]
-    assert "display: grid;" in emoji_glyph_rule
-    assert "width: 100%;" in emoji_glyph_rule
-    assert "height: 100%;" in emoji_glyph_rule
-    assert "place-items: center;" in emoji_glyph_rule
-    assert "transform: none;" in emoji_glyph_rule
-    assert "translate(" not in emoji_glyph_rule
+    recent_score_rule_start = styles.index(".recent-score {")
+    recent_score_rule_end = styles.index("}", recent_score_rule_start)
+    recent_score_rule = styles[recent_score_rule_start:recent_score_rule_end]
+    assert "place-items: center;" in recent_score_rule
 
     admin_panel_rule_start = styles.index(".admin-user-panel {")
     admin_panel_rule_end = styles.index("}", admin_panel_rule_start)
@@ -1233,32 +1291,63 @@ def test_init_script_creates_systemd_service_from_env_example():
     assert "MOOD_ADMIN_NICKNAME=admin" in env_example
 
 
-def test_mood_report_requires_emoji_and_required_questions(client):
+def test_mood_report_requires_all_ten_valid_panas_answers(client):
     register(client)
 
-    missing_emoji = client.post(
+    missing_answer_data = panas_data()
+    missing_answer_data.pop("cheerful")
+    missing_answer = client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "",
-            "day_event": "只有回答",
-            "body_feeling": "身体还行",
-            "extra_thoughts": "",
-        },
+        data=missing_answer_data,
         follow_redirects=True,
     )
-    assert "请选择一个心情 emoji" in missing_emoji.text
+    assert "请完成全部 10 项" in missing_answer.text
 
-    missing_required_answer = client.post(
+    invalid_answer_data = panas_data()
+    invalid_answer_data["sad"] = "6"
+    invalid_answer = client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "😄",
-            "day_event": "",
-            "body_feeling": "身体还行",
-            "extra_thoughts": "",
-        },
+        data=invalid_answer_data,
         follow_redirects=True,
     )
-    assert "请回答前两个问题" in missing_required_answer.text
+    assert "请完成全部 10 项" in invalid_answer.text
+
+
+def test_panas_scores_are_converted_to_percentages():
+    high = calculate_panas_scores(panas_data(positive=5, negative=1))
+    middle = calculate_panas_scores(panas_data(positive=3, negative=3))
+
+    assert high == {
+        "responses": {item["key"]: 5 if item["dimension"] == "positive" else 1 for item in PANAS_ITEMS},
+        "positive_score": 100,
+        "negative_score": 0,
+        "mood_score": 100,
+    }
+    assert middle["positive_score"] == 50
+    assert middle["negative_score"] == 50
+    assert middle["mood_score"] == 50
+
+
+@pytest.mark.parametrize(
+    ("score", "emoji", "label"),
+    [
+        (0, "😢", "难过"),
+        (19, "😢", "难过"),
+        (20, "😟", "担心"),
+        (39, "😟", "担心"),
+        (40, "😐", "平静"),
+        (59, "😐", "平静"),
+        (60, "🙂", "愉快"),
+        (79, "🙂", "愉快"),
+        (80, "😄", "开心"),
+        (100, "😄", "开心"),
+    ],
+)
+def test_composite_score_maps_to_calendar_emoji_band(score, emoji, label):
+    mood = score_mood(score)
+
+    assert mood["emoji"] == emoji
+    assert mood["label"] == label
 
 
 def test_sqlite_data_persists_across_app_recreation(tmp_path):
@@ -1270,12 +1359,7 @@ def test_sqlite_data_persists_across_app_recreation(tmp_path):
     register(first_client)
     first_client.post(
         "/mood-report",
-        data={
-            "mood_emoji": "😄",
-            "day_event": "重启后也应该还在",
-            "body_feeling": "精神不错",
-            "extra_thoughts": "",
-        },
+        data=panas_data(positive=5, negative=1),
         follow_redirects=True,
     )
 
@@ -1287,5 +1371,95 @@ def test_sqlite_data_persists_across_app_recreation(tmp_path):
 
     assert "用户详情" in response.text
     calendar_page = second_client.get("/mood-calendar")
-    assert "😄" in calendar_grid(calendar_page.text)
+    assert 'style="--score: 100"' in calendar_grid(calendar_page.text)
     assert rows(second_app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 1
+
+
+def test_legacy_mood_records_are_archived_and_only_shown_in_calendar_and_history(
+    tmp_path,
+):
+    db_path = tmp_path / "legacy.sqlite3"
+    first_app = create_app(
+        {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test-secret"}
+    )
+    first_client = TestClient(first_app, follow_redirects=False)
+    register(first_client)
+    user_id = rows(first_app, "SELECT id FROM users")[0]["id"]
+    today = datetime.now().date()
+    old_reason = (
+        "今天做了什么，什么影响了你的心情？\n完成了旧版测试"
+        "\n\n今天身体感觉怎么样？\n有一点疲惫"
+    )
+
+    with sqlite3.connect(db_path) as db:
+        db.execute("DROP INDEX idx_mood_entries_user_date")
+        db.execute("DROP TABLE mood_entries")
+        db.execute(
+            """
+            CREATE TABLE mood_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                mood_emoji TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                entry_date TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO mood_entries (
+                id, user_id, mood_emoji, reason, entry_date, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                77,
+                user_id,
+                "😡",
+                old_reason,
+                today.isoformat(),
+                f"{today.isoformat()}T08:30:00",
+            ),
+        )
+        db.commit()
+
+    migrated_app = create_app(
+        {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test-secret"}
+    )
+    migrated_client = TestClient(migrated_app, follow_redirects=False)
+    login(migrated_client)
+
+    assert rows(migrated_app, "SELECT COUNT(*) AS count FROM mood_entries")[0][
+        "count"
+    ] == 0
+    archive = rows(migrated_app, "SELECT * FROM legacy_mood_entries")
+    assert len(archive) == 1
+    assert archive[0]["source_entry_id"] == 77
+    assert archive[0]["mood_emoji"] == "😡"
+
+    calendar = migrated_client.get(f"/mood-calendar?month={today:%Y-%m}")
+    grid = calendar_grid(calendar.text)
+    assert "😡" in grid
+    assert "旧版心情存档" in grid
+    assert "is-legacy-entry" in grid
+    assert "存档" in grid
+    assert "含 1 天旧版存档" in calendar.text
+
+    history = migrated_client.get("/mood-history")
+    assert "旧版心情存档" in history.text
+    assert "完成了旧版测试" in history.text
+    assert "有一点疲惫" in history.text
+    assert "不计入趋势统计" in history.text
+
+    trends = migrated_client.get("/mood-trends")
+    assert "😡" not in trends.text
+    assert '"score": null' in trends.text
+
+    recreated_app = create_app(
+        {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test-secret"}
+    )
+    assert rows(
+        recreated_app,
+        "SELECT COUNT(*) AS count FROM legacy_mood_entries",
+    )[0]["count"] == 1

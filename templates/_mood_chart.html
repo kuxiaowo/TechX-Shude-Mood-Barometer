@@ -1,0 +1,23 @@
+<article class="mood-chart-card">
+  <header class="mood-chart-header">
+    <div>
+      <p class="mood-chart-period">{{ chart_period }}</p>
+      <h2>{{ chart_title }}</h2>
+    </div>
+    <div class="mood-chart-legend" aria-label="图例">
+      <span class="is-mood">综合</span>
+      <span class="is-positive">正性</span>
+      <span class="is-negative">负性</span>
+    </div>
+  </header>
+  <div
+    class="mood-chart-canvas"
+    data-mood-chart
+    data-points='{{ chart_data | tojson }}'
+    aria-label="{{ chart_title }}，每天按最后一次量表统计"
+  >
+    <svg viewBox="0 0 720 250" role="img" aria-hidden="true"></svg>
+    <p class="mood-chart-empty">这段时间还没有量表记录。</p>
+  </div>
+  <p class="mood-chart-note">每天仅采用最后一次提交；空白日期不补值。</p>
+</article>

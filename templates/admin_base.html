@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block body_class %}admin-console-page{% endblock %}
+
+{% block body %}
+<div class="admin-console-shell">
+  <aside class="admin-console-sidebar">
+    <a class="admin-console-brand" href="{{ url_for('admin_dashboard') }}">
+      <span class="admin-console-mark">TX</span>
+      <span><b>TechX</b><small>管理控制台</small></span>
+    </a>
+
+    <nav class="admin-console-nav" aria-label="管理员导航">
+      <a class="admin-console-nav-item {% if active_page == 'admin_dashboard' %}is-active{% endif %}" href="{{ url_for('admin_dashboard') }}">
+        <span>用户管理</span><small>账户、角色与记录</small>
+      </a>
+      <a class="admin-console-nav-item {% if active_page == 'admin_activity' %}is-active{% endif %}" href="{{ url_for('admin_activity') }}">
+        <span>访问审计</span><small>操作与访问轨迹</small>
+      </a>
+      <a class="admin-console-nav-item {% if active_page == 'admin_settings' %}is-active{% endif %}" href="{{ url_for('admin_settings') }}">
+        <span>系统设置</span><small>注册与安全规则</small>
+      </a>
+    </nav>
+
+    <div class="admin-console-account">
+      <span class="admin-console-avatar">{{ current_user["real_name"][:1] }}</span>
+      <div><strong>{{ current_user["real_name"] }}</strong><small>@{{ current_user["nickname"] }}</small></div>
+    </div>
+    <a class="admin-console-return" href="{{ url_for('profile') }}">返回用户端</a>
+    <form method="post" action="{{ url_for('logout') }}">
+      <button class="admin-console-logout" type="submit">退出登录</button>
+    </form>
+  </aside>
+
+  <main class="admin-console-main">
+    {% include "_flash.html" %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

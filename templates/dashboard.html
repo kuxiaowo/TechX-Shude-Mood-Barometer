@@ -14,23 +14,20 @@
         <span>个人资料</span>
       </a>
       <a class="nav-item {% if active_page == 'mood_report' %}is-active{% endif %}" href="{{ url_for('mood_report') }}">
-        <span>心情报表</span>
+        <span>心情量表</span>
       </a>
       <a class="nav-item {% if active_page == 'mood_calendar' %}is-active{% endif %}" href="{{ url_for('mood_calendar') }}">
         <span>心情日历</span>
+      </a>
+      <a class="nav-item {% if active_page == 'mood_trends' %}is-active{% endif %}" href="{{ url_for('mood_trends') }}">
+        <span>心情趋势</span>
       </a>
       <a class="nav-item {% if active_page == 'mood_history' %}is-active{% endif %}" href="{{ url_for('mood_history') }}">
         <span>历史记录</span>
       </a>
       {% if current_user["is_admin"] %}
-        <a class="nav-item {% if active_page == 'admin_dashboard' %}is-active{% endif %}" href="{{ url_for('admin_dashboard') }}">
-          <span>管理员后台</span>
-        </a>
-        <a class="nav-item {% if active_page == 'admin_activity' %}is-active{% endif %}" href="{{ url_for('admin_activity') }}">
-          <span>访问动态</span>
-        </a>
-        <a class="nav-item {% if active_page == 'admin_settings' %}is-active{% endif %}" href="{{ url_for('admin_settings') }}">
-          <span>管理员设置</span>
+        <a class="nav-item" href="{{ url_for('admin_dashboard') }}">
+          <span>管理控制台</span>
         </a>
       {% endif %}
     </nav>
@@ -54,9 +51,9 @@
   </main>
 
   <aside class="support-panel">
-    <h2>记录提示</h2>
-    <p>每天可以记录多次心情；日历会显示当天最后一次提交。</p>
-    <a class="outline-button" href="{{ url_for('mood_report') }}">记录今天</a>
+    <h2>填写提示</h2>
+    <p>量表共 10 项，按今天的真实感受选择。每天可以填写多次，日历显示当天最后一次结果。</p>
+    <a class="outline-button" href="{{ url_for('mood_report') }}">填写今日量表</a>
 
     <div class="recent-block">
       <div class="recent-header">
@@ -67,21 +64,12 @@
         <ul class="recent-list">
           {% for entry in recent_entries %}
             <li>
-              <span class="recent-emoji">
-                <span class="emoji-glyph">{{ entry["mood_emoji"] }}</span>
+              <span class="recent-score">
+                {{ entry["mood_score"] }}
               </span>
               <div>
                 <strong>{{ entry["entry_date"] }}</strong>
-                <div class="reason-parts compact">
-                  {% for part in entry["reason"] | mood_reason_parts %}
-                    <section class="reason-part">
-                      {% if part.question %}
-                        <span class="reason-question">{{ part.question }}</span>
-                      {% endif %}
-                      <p class="reason-answer">{{ part.answer }}</p>
-                    </section>
-                  {% endfor %}
-                </div>
+                <p class="recent-score-meta">正性 {{ entry["positive_score"] }} · 负性 {{ entry["negative_score"] }}</p>
               </div>
             </li>
           {% endfor %}

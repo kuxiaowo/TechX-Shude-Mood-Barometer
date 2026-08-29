@@ -1,0 +1,21 @@
+{% extends "dashboard.html" %}
+
+{% block title %}心情趋势 - TechX心情晴雨表{% endblock %}
+{% block content_card_class %}mood-trends-card{% endblock %}
+
+{% block content %}
+<section class="page-heading trends-page-heading">
+  <p class="eyebrow">每日轨迹</p>
+  <h1>心情趋势</h1>
+  <p>每天只采用最后一次提交的量表，分别观察最近一周与最近 30 天的变化。</p>
+</section>
+
+<section class="mood-chart-grid trends-page-grid" aria-label="一周和一个月心情趋势">
+  {% with chart_period="最近 7 天", chart_title="一周心情趋势", chart_data=week_chart %}
+    {% include "_mood_chart.html" %}
+  {% endwith %}
+  {% with chart_period="最近 30 天", chart_title="一个月心情趋势", chart_data=month_chart %}
+    {% include "_mood_chart.html" %}
+  {% endwith %}
+</section>
+{% endblock %}

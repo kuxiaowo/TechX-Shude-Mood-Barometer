@@ -1,10 +1,10 @@
-{% extends "dashboard.html" %}
+{% extends "admin_base.html" %}
 
 {% block title %}用户心情记录 - TechX心情晴雨表{% endblock %}
 {% block content_card_class %}adaptive-scroll-card{% endblock %}
 
 {% block content %}
-<section class="page-heading admin-detail-heading">
+<section class="admin-console-heading admin-detail-heading">
   <div>
     <p class="eyebrow">用户心情记录</p>
     <h1>{{ target_user["real_name"] }}</h1>
@@ -22,13 +22,10 @@
       <p>{{ target_user["created_at"] | datetime_cn }} 注册</p>
     </div>
     <div class="admin-user-header-actions">
-      {% if target_user["is_admin"] %}
-        <span class="admin-badge">管理员</span>
-      {% else %}
-        <form method="post" action="{{ url_for('promote_admin', user_id=target_user['id']) }}">
-          <button class="primary-button compact admin-user-action" type="submit">设为管理员</button>
-        </form>
-      {% endif %}
+      {% if target_user["is_admin"] %}<span class="admin-badge">管理员</span>{% endif %}
+      <span class="account-status-badge {% if target_user['is_active'] %}is-active{% else %}is-disabled{% endif %}">
+        {{ "账号启用" if target_user["is_active"] else "账号停用" }}
+      </span>
     </div>
   </header>
 
@@ -52,6 +49,51 @@
   </dl>
 </section>
 
+<section class="admin-control-panel" aria-label="账号控制">
+  <div>
+    <p class="eyebrow">Account control</p>
+    <h2>账号控制</h2>
+    <p>角色和账号状态变更会立即生效。</p>
+  </div>
+  <form method="post" action="{{ url_for('update_user_role', user_id=target_user['id']) }}">
+    <label>
+      <span>用户角色</span>
+      <select name="role" {% if target_user['id'] == current_user['id'] %}disabled{% endif %}>
+        <option value="member" {% if not target_user['is_admin'] %}selected{% endif %}>普通用户</option>
+        <option value="admin" {% if target_user['is_admin'] %}selected{% endif %}>管理员</option>
+      </select>
+    </label>
+    <button class="outline-button" type="submit" {% if target_user['id'] == current_user['id'] %}disabled{% endif %}>更新角色</button>
+  </form>
+  <form method="post" action="{{ url_for('update_user_status', user_id=target_user['id']) }}">
+    <label>
+      <span>账号状态</span>
+      <select name="status" {% if target_user['id'] == current_user['id'] %}disabled{% endif %}>
+        <option value="active" {% if target_user['is_active'] %}selected{% endif %}>启用</option>
+        <option value="disabled" {% if not target_user['is_active'] %}selected{% endif %}>停用</option>
+      </select>
+    </label>
+    <button class="outline-button" type="submit" {% if target_user['id'] == current_user['id'] %}disabled{% endif %}>更新状态</button>
+  </form>
+  <form
+    method="post"
+    action="{{ url_for('delete_users') }}"
+    data-confirm="确定删除这个用户吗？该操作会同时删除其全部量表记录。"
+  >
+    <input type="hidden" name="user_ids" value="{{ target_user['id'] }}">
+    <button class="danger-button" type="submit" {% if target_user['id'] == current_user['id'] %}disabled{% endif %}>删除用户</button>
+  </form>
+</section>
+
+<section class="mood-chart-grid admin-user-charts" aria-label="用户心情趋势">
+  {% with chart_period="最近 7 天", chart_title="一周心情趋势", chart_data=week_chart %}
+    {% include "_mood_chart.html" %}
+  {% endwith %}
+  {% with chart_period="最近 30 天", chart_title="一个月心情趋势", chart_data=month_chart %}
+    {% include "_mood_chart.html" %}
+  {% endwith %}
+</section>
+
 <section class="admin-record-heading">
   <h2>心情记录</h2>
   <p>按提交时间倒序显示。</p>
@@ -62,28 +104,41 @@
     {% for entry in entries %}
       <article class="admin-entry">
         <div class="admin-entry-heading">
-          <span class="recent-emoji">
-            <span class="emoji-glyph">{{ entry["mood_emoji"] }}</span>
+          <span class="recent-score">
+            {{ entry["mood_score"] }}
           </span>
           <div>
             <strong>{{ entry["entry_date"] }}</strong>
             <span class="admin-entry-time">{{ entry["created_at"] | datetime_cn }}</span>
           </div>
         </div>
-        <div class="reason-parts">
-          {% for part in entry["reason"] | mood_reason_parts %}
-            <section class="reason-part">
-              {% if part.question %}
-                <span class="reason-question">{{ part.question }}</span>
-              {% endif %}
-              <p class="reason-answer">{{ part.answer }}</p>
+        <dl class="entry-score-grid">
+          <div><dt>综合心情</dt><dd>{{ entry["mood_score"] }}</dd></div>
+          <div><dt>正性情绪</dt><dd>{{ entry["positive_score"] }}</dd></div>
+          <div><dt>负性情绪</dt><dd>{{ entry["negative_score"] }}</dd></div>
+        </dl>
+        {% set response_details = entry["panas_responses"] | panas_response_details %}
+        <div class="panas-record-details" aria-label="10 项量表明细">
+          {% for dimension, dimension_label in [("positive", "正性情绪 5 项"), ("negative", "负性情绪 5 项")] %}
+            <section class="panas-record-group is-{{ dimension }}">
+              <h3>{{ dimension_label }}</h3>
+              <ol>
+                {% for item in response_details if item.dimension == dimension %}
+                  <li>
+                    <span>{{ item.label }}</span>
+                    <strong>{{ item.score if item.score is not none else "--" }}</strong>
+                    <small>{{ item.score_label }}</small>
+                  </li>
+                {% endfor %}
+              </ol>
             </section>
           {% endfor %}
         </div>
       </article>
     {% endfor %}
-  {% else %}
+  {% elif not legacy_entries %}
     <p class="muted">这个用户还没有提交心情记录。</p>
   {% endif %}
+  {% include "_legacy_mood_archive.html" %}
 </section>
 {% endblock %}
