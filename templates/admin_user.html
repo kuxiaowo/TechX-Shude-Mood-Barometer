@@ -102,10 +102,11 @@
 <section class="admin-entry-list" aria-label="心情记录">
   {% if entries %}
     {% for entry in entries %}
+      {% set scores = panas_display_scores(entry["positive_score"], entry["negative_score"]) %}
       <article class="admin-entry">
         <div class="admin-entry-heading">
           <span class="recent-score">
-            {{ entry["mood_score"] }}
+            {{ scores.balance_label }}
           </span>
           <div>
             <strong>{{ entry["entry_date"] }}</strong>
@@ -113,13 +114,13 @@
           </div>
         </div>
         <dl class="entry-score-grid">
-          <div><dt>综合心情</dt><dd>{{ entry["mood_score"] }}</dd></div>
-          <div><dt>正性情绪</dt><dd>{{ entry["positive_score"] }}</dd></div>
-          <div><dt>负性情绪</dt><dd>{{ entry["negative_score"] }}</dd></div>
+          <div><dt>正性情感</dt><dd>{{ scores.positive_raw }} / 25</dd></div>
+          <div><dt>负性情感</dt><dd>{{ scores.negative_raw }} / 25</dd></div>
+          <div><dt>情感平衡</dt><dd>{{ scores.balance_label }}</dd></div>
         </dl>
         {% set response_details = entry["panas_responses"] | panas_response_details %}
         <div class="panas-record-details" aria-label="10 项量表明细">
-          {% for dimension, dimension_label in [("positive", "正性情绪 5 项"), ("negative", "负性情绪 5 项")] %}
+          {% for dimension, dimension_label in [("positive", "正性情感 5 项"), ("negative", "负性情感 5 项")] %}
             <section class="panas-record-group is-{{ dimension }}">
               <h3>{{ dimension_label }}</h3>
               <ol>

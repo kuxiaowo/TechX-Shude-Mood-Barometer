@@ -63,13 +63,14 @@
       {% if recent_entries %}
         <ul class="recent-list">
           {% for entry in recent_entries %}
+            {% set scores = panas_display_scores(entry["positive_score"], entry["negative_score"]) %}
             <li>
               <span class="recent-score">
-                {{ entry["mood_score"] }}
+                {{ scores.balance_label }}
               </span>
               <div>
                 <strong>{{ entry["entry_date"] }}</strong>
-                <p class="recent-score-meta">正性 {{ entry["positive_score"] }} · 负性 {{ entry["negative_score"] }}</p>
+                <p class="recent-score-meta">正性 {{ scores.positive_raw }}/25 · 负性 {{ scores.negative_raw }}/25</p>
               </div>
             </li>
           {% endfor %}

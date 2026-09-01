@@ -1,14 +1,14 @@
 {% extends "dashboard.html" %}
 
-{% block title %}PANAS-C-SF 心情量表 - TechX心情晴雨表{% endblock %}
+{% block title %}今日心情量表 - TechX心情晴雨表{% endblock %}
 {% block content_card_class %}panas-card{% endblock %}
 
 {% block content %}
 <section class="page-heading panas-heading">
   <div>
-    <p class="eyebrow">PANAS-C-SF · 10 项</p>
+    <p class="eyebrow">参考 PANAS-C-SF · 10 项</p>
     <h1>今天的情绪，落在哪里？</h1>
-    <p class="panas-intro">回想今天的感受，为每个词选择最符合你的程度。没有标准答案，按第一感觉填写即可。</p>
+    <p class="panas-intro">回想今天的整体感受，为每个词选择你感受到它的程度。没有标准答案，按真实感受填写即可。</p>
   </div>
   <span class="panas-timeframe">时间范围：今天</span>
 </section>
@@ -16,7 +16,7 @@
 <form class="panas-form" method="post" action="{{ url_for('mood_report') }}" data-panas-form>
   <div class="panas-layout">
     <fieldset class="panas-questionnaire">
-      <legend class="sr-only">10 项 PANAS-C-SF 心情量表</legend>
+      <legend class="sr-only">参考 PANAS-C-SF 的 10 项今日心情量表</legend>
       <div class="panas-scale-guide" aria-hidden="true">
         <span>程度</span>
         {% for option in panas_response_options %}
@@ -31,7 +31,7 @@
               <span class="panas-item-number">{{ "%02d" | format(loop.index) }}</span>
               <strong>{{ item.label }}</strong>
             </div>
-            <div class="panas-choice-row" role="radiogroup" aria-label="{{ item.label }}的程度">
+            <div class="panas-choice-row" role="radiogroup" aria-label="你感到“{{ item.label }}”的程度">
               {% for option in panas_response_options %}
                 <label class="panas-choice" title="{{ option.label }}">
                   <input
@@ -53,27 +53,27 @@
 
     <aside class="panas-score-panel" aria-live="polite">
       <p class="panas-score-kicker">实时换算</p>
-      <div class="panas-score-dial" data-score-dial style="--score: 0">
-        <div>
-          <strong data-mood-score>--</strong>
-          <span>/ 100</span>
-        </div>
-      </div>
-      <h2>综合心情分</h2>
+      <h2>正性与负性分别看</h2>
       <p class="panas-score-status" data-score-status>完成 10 项后显示</p>
 
       <dl class="panas-dimensions">
-        <div>
-          <dt>正性情绪</dt>
-          <dd><strong data-positive-score>--</strong><span>/100</span></dd>
+        <div class="is-positive">
+          <dt>正性情感</dt>
+          <dd><strong data-positive-score>--</strong><span>/25</span></dd>
         </div>
-        <div>
-          <dt>负性情绪</dt>
-          <dd><strong data-negative-score>--</strong><span>/100</span></dd>
+        <div class="is-negative">
+          <dt>负性情感</dt>
+          <dd><strong data-negative-score>--</strong><span>/25</span></dd>
         </div>
       </dl>
 
-      <p class="panas-score-note">综合分是本系统的百分制换算；量表原始结果仍以正性、负性两个维度分别解释，不用于医疗诊断。</p>
+      <div class="panas-balance">
+        <span>今日情感平衡</span>
+        <strong data-balance-score>--</strong>
+        <small>范围 -20～+20</small>
+      </div>
+
+      <p class="panas-score-note">情感平衡是正性减负性后的辅助读数；两个维度仍需分别理解，结果不用于医疗诊断。</p>
       <button class="primary-button" type="submit">保存今日量表</button>
     </aside>
   </div>

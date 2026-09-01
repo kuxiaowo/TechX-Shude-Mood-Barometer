@@ -22,14 +22,14 @@
     {% if month_archive_count %}<small class="calendar-archive-count">含 {{ month_archive_count }} 天旧版存档</small>{% endif %}
   </div>
   <div>
-    <span>新版月平均分</span>
-    <strong>{{ month_average if month_average is not none else "--" }}</strong>
+    <span>月平均情感平衡</span>
+    <strong>{% if month_average_balance is not none %}{{ "+" if month_average_balance > 0 else "" }}{{ month_average_balance }}{% else %}--{% endif %}</strong>
   </div>
-  <div class="calendar-emoji-legend" aria-label="综合分与表情区间">
+  <div class="calendar-emoji-legend" aria-label="情感平衡方向图例">
     {% for band in mood_score_bands %}
       <span class="calendar-emoji-band">
         <b aria-hidden="true">{{ band.emoji }}</b>
-        <small>{{ band.min }}–{{ band.max }} 分<br>{{ band.label }}</small>
+        <small>{{ band.range_label }}<br>{{ band.label }}</small>
       </span>
     {% endfor %}
   </div>
@@ -61,16 +61,17 @@
           </a>
         {% else %}
           {% set mood = score_mood(cell.entry["mood_score"]) %}
+          {% set scores = panas_display_scores(cell.entry["positive_score"], cell.entry["negative_score"]) %}
           <a
             class="day-cell has-entry {% if not cell.in_month %}is-muted{% endif %} {% if cell.is_today %}is-today{% endif %}"
             style="--score: {{ cell.entry['mood_score'] }}"
             href="{{ url_for('mood_history') }}#entry-{{ cell.entry['id'] }}"
-            aria-label="查看 {{ cell.date.isoformat() }} 的心情量表，{{ mood.label }}，综合分 {{ cell.entry['mood_score'] }}"
+            aria-label="查看 {{ cell.date.isoformat() }} 的心情量表，情感平衡 {{ scores.balance_label }}，{{ mood.label }}"
           >
             <span class="day-number">{{ cell.date.day }}</span>
             <span class="calendar-day-mood">
               <span class="calendar-day-emoji" aria-hidden="true">{{ mood.emoji }}</span>
-              <small><strong>{{ cell.entry["mood_score"] }} 分</strong><span>{{ mood.label }}</span></small>
+              <small><strong>{{ scores.balance_label }}</strong><span>{{ mood.label }}</span></small>
             </span>
           </a>
         {% endif %}

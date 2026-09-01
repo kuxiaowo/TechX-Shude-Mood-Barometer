@@ -3,11 +3,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (panasForm) {
     const positiveKeys = ["cheerful", "lively", "happy", "joyful", "proud"];
     const negativeKeys = ["miserable", "mad", "afraid", "scared", "sad"];
-    const moodOutput = panasForm.querySelector("[data-mood-score]");
+    const balanceOutput = panasForm.querySelector("[data-balance-score]");
     const positiveOutput = panasForm.querySelector("[data-positive-score]");
     const negativeOutput = panasForm.querySelector("[data-negative-score]");
     const statusOutput = panasForm.querySelector("[data-score-status]");
-    const scoreDial = panasForm.querySelector("[data-score-dial]");
 
     const selectedValue = (name) => {
       const input = panasForm.querySelector(`input[name="${name}"]:checked`);
@@ -22,25 +21,23 @@ document.addEventListener("DOMContentLoaded", () => {
       const completed = Object.values(responses).filter(Number.isFinite).length;
 
       if (completed !== allKeys.length) {
-        moodOutput.textContent = "--";
+        balanceOutput.textContent = "--";
         positiveOutput.textContent = "--";
         negativeOutput.textContent = "--";
         statusOutput.textContent = `已完成 ${completed} / ${allKeys.length} 项`;
-        scoreDial.style.setProperty("--score", 0);
         return;
       }
 
       const positiveSum = positiveKeys.reduce((sum, key) => sum + responses[key], 0);
       const negativeSum = negativeKeys.reduce((sum, key) => sum + responses[key], 0);
-      const positiveScore = (positiveSum - 5) * 5;
-      const negativeScore = (negativeSum - 5) * 5;
-      const moodScore = Math.round((positiveScore + 100 - negativeScore) / 2);
+      const balanceScore = positiveSum - negativeSum;
 
-      moodOutput.textContent = moodScore;
-      positiveOutput.textContent = positiveScore;
-      negativeOutput.textContent = negativeScore;
+      balanceOutput.textContent = balanceScore > 0
+        ? `+${balanceScore}`
+        : String(balanceScore);
+      positiveOutput.textContent = positiveSum;
+      negativeOutput.textContent = negativeSum;
       statusOutput.textContent = "10 项已完成，可以保存";
-      scoreDial.style.setProperty("--score", moodScore);
     };
 
     panasForm.addEventListener("change", updatePanasScore);
@@ -136,7 +133,12 @@ document.addEventListener("DOMContentLoaded", () => {
           class: `mood-chart-point ${className}`,
         });
         const title = document.createElementNS(namespace, "title");
-        title.textContent = `${point.date} · ${key === "score" ? "综合" : key === "positive" ? "正性" : "负性"} ${value}`;
+        const seriesLabel = key === "score"
+          ? "情感平衡换算"
+          : key === "positive"
+            ? "正性换算"
+            : "负性换算";
+        title.textContent = `${point.date} · ${seriesLabel} ${value}`;
         circle.appendChild(title);
       });
       drawSegment();

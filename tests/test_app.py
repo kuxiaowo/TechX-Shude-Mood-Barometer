@@ -13,6 +13,7 @@ from main import (
     calculate_panas_scores,
     create_app,
     get_client_ip,
+    panas_display_scores,
     score_mood,
 )
 
@@ -590,9 +591,9 @@ def test_first_registered_user_can_view_admin_dashboard(app, client):
     assert "用户心情记录" in student_detail.text
     assert "student" in student_detail.text
     assert "entry-score-grid" in student_detail.text
-    assert "综合心情" in student_detail.text
-    assert "正性情绪" in student_detail.text
-    assert "负性情绪" in student_detail.text
+    assert "情感平衡" in student_detail.text
+    assert "正性情感" in student_detail.text
+    assert "负性情感" in student_detail.text
 
     filtered = client.get("/admin?q=student")
     filtered_panel = admin_user_panel(filtered.text)
@@ -1150,7 +1151,7 @@ def test_mood_submission_keeps_history_and_calendar_uses_latest_score_only(
 
     assert 'style="--score: 25"' in grid_html
     assert 'style="--score: 88"' not in grid_html
-    assert "😟" in grid_html
+    assert "↘" in grid_html
     assert "😄" not in grid_html
     assert rows(app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 2
 
@@ -1313,12 +1314,34 @@ def test_mood_report_requires_all_ten_valid_panas_answers(client):
     assert "请完成全部 10 项" in invalid_answer.text
 
 
-def test_panas_scores_are_converted_to_percentages():
+def test_mood_report_uses_child_friendly_five_point_wording(client):
+    register(client)
+
+    response = client.get("/mood-report")
+
+    assert response.status_code == 200
+    assert "参考 PANAS-C-SF" in response.text
+    assert "心情愉快的" in response.text
+    assert "痛苦、难受的" in response.text
+    assert "有一点" in response.text
+    assert "比较强烈" in response.text
+    assert "非常强烈" in response.text
+    assert "正性与负性分别看" in response.text
+    assert "范围 -20～+20" in response.text
+
+
+def test_panas_scores_include_raw_dimensions_balance_and_stored_percentages():
     high = calculate_panas_scores(panas_data(positive=5, negative=1))
     middle = calculate_panas_scores(panas_data(positive=3, negative=3))
 
     assert high == {
-        "responses": {item["key"]: 5 if item["dimension"] == "positive" else 1 for item in PANAS_ITEMS},
+        "responses": {
+            item["key"]: 5 if item["dimension"] == "positive" else 1
+            for item in PANAS_ITEMS
+        },
+        "positive_raw": 25,
+        "negative_raw": 5,
+        "balance_score": 20,
         "positive_score": 100,
         "negative_score": 0,
         "mood_score": 100,
@@ -1326,24 +1349,32 @@ def test_panas_scores_are_converted_to_percentages():
     assert middle["positive_score"] == 50
     assert middle["negative_score"] == 50
     assert middle["mood_score"] == 50
+    assert middle["positive_raw"] == 15
+    assert middle["negative_raw"] == 15
+    assert middle["balance_score"] == 0
+
+
+def test_stored_percentage_scores_can_be_displayed_as_raw_scores():
+    assert panas_display_scores(100, 0) == {
+        "positive_raw": 25,
+        "negative_raw": 5,
+        "balance": 20,
+        "balance_label": "+20",
+    }
+    assert panas_display_scores(50, 50)["balance_label"] == "0"
 
 
 @pytest.mark.parametrize(
     ("score", "emoji", "label"),
     [
-        (0, "😢", "难过"),
-        (19, "😢", "难过"),
-        (20, "😟", "担心"),
-        (39, "😟", "担心"),
-        (40, "😐", "平静"),
-        (59, "😐", "平静"),
-        (60, "🙂", "愉快"),
-        (79, "🙂", "愉快"),
-        (80, "😄", "开心"),
-        (100, "😄", "开心"),
+        (0, "↘", "负性较多"),
+        (49, "↘", "负性较多"),
+        (50, "↔", "正负相等"),
+        (51, "↗", "正性较多"),
+        (100, "↗", "正性较多"),
     ],
 )
-def test_composite_score_maps_to_calendar_emoji_band(score, emoji, label):
+def test_balance_percentage_maps_to_calendar_direction(score, emoji, label):
     mood = score_mood(score)
 
     assert mood["emoji"] == emoji

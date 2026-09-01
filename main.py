@@ -56,32 +56,48 @@ AUTH_BACKGROUND_DIR = STATIC_DIR / "login-backgrounds"
 AUTH_BACKGROUND_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 PANAS_ITEMS = (
-    {"key": "cheerful", "label": "愉快的", "dimension": "positive"},
-    {"key": "lively", "label": "活跃的", "dimension": "positive"},
+    {"key": "cheerful", "label": "心情愉快的", "dimension": "positive"},
+    {"key": "lively", "label": "有活力的", "dimension": "positive"},
     {"key": "happy", "label": "快乐的", "dimension": "positive"},
-    {"key": "joyful", "label": "欣喜的", "dimension": "positive"},
+    {"key": "joyful", "label": "喜悦的", "dimension": "positive"},
     {"key": "proud", "label": "自豪的", "dimension": "positive"},
-    {"key": "miserable", "label": "沮丧的", "dimension": "negative"},
+    {"key": "miserable", "label": "痛苦、难受的", "dimension": "negative"},
     {"key": "mad", "label": "生气的", "dimension": "negative"},
     {"key": "afraid", "label": "害怕的", "dimension": "negative"},
-    {"key": "scared", "label": "受惊的", "dimension": "negative"},
-    {"key": "sad", "label": "悲伤的", "dimension": "negative"},
+    {"key": "scared", "label": "受到惊吓的", "dimension": "negative"},
+    {"key": "sad", "label": "悲伤、难过的", "dimension": "negative"},
 )
 
 PANAS_RESPONSE_OPTIONS = (
     {"value": 1, "label": "几乎没有"},
-    {"value": 2, "label": "比较少"},
+    {"value": 2, "label": "有一点"},
     {"value": 3, "label": "中等程度"},
-    {"value": 4, "label": "比较多"},
-    {"value": 5, "label": "极其多"},
+    {"value": 4, "label": "比较强烈"},
+    {"value": 5, "label": "非常强烈"},
 )
 
 MOOD_SCORE_BANDS = (
-    {"min": 0, "max": 19, "emoji": "😢", "label": "难过"},
-    {"min": 20, "max": 39, "emoji": "😟", "label": "担心"},
-    {"min": 40, "max": 59, "emoji": "😐", "label": "平静"},
-    {"min": 60, "max": 79, "emoji": "🙂", "label": "愉快"},
-    {"min": 80, "max": 100, "emoji": "😄", "label": "开心"},
+    {
+        "min": 0,
+        "max": 49,
+        "emoji": "↘",
+        "range_label": "-20～-1",
+        "label": "负性较多",
+    },
+    {
+        "min": 50,
+        "max": 50,
+        "emoji": "↔",
+        "range_label": "0",
+        "label": "正负相等",
+    },
+    {
+        "min": 51,
+        "max": 100,
+        "emoji": "↗",
+        "range_label": "+1～+20",
+        "label": "正性较多",
+    },
 )
 
 GRADES = ("2024", "2025", "2026")
@@ -713,6 +729,7 @@ def register_template_helpers() -> None:
     templates.env.globals["get_flashed_messages"] = get_flashed_messages
     templates.env.globals["url_for"] = template_url_for
     templates.env.globals["score_mood"] = score_mood
+    templates.env.globals["panas_display_scores"] = panas_display_scores
     templates.env.filters["datetime_cn"] = datetime_cn
     templates.env.filters["date_cn"] = date_cn
     templates.env.filters["panas_response_details"] = panas_response_details
@@ -831,6 +848,33 @@ def score_mood(value: int | str | None) -> dict[str, Any]:
         if band["min"] <= score <= band["max"]:
             return band
     return MOOD_SCORE_BANDS[-1]
+
+
+def panas_display_scores(
+    positive_score: int | str | None,
+    negative_score: int | str | None,
+) -> dict[str, Any]:
+    """Convert stored 0–100 dimension scores back to PANAS raw scores."""
+    try:
+        positive_percent = max(0, min(100, int(positive_score)))
+        negative_percent = max(0, min(100, int(negative_score)))
+    except (TypeError, ValueError):
+        return {
+            "positive_raw": None,
+            "negative_raw": None,
+            "balance": None,
+            "balance_label": "--",
+        }
+
+    positive_raw = positive_percent // 5 + 5
+    negative_raw = negative_percent // 5 + 5
+    balance = positive_raw - negative_raw
+    return {
+        "positive_raw": positive_raw,
+        "negative_raw": negative_raw,
+        "balance": balance,
+        "balance_label": f"{balance:+d}" if balance else "0",
+    }
 
 
 def register_routes(app: FastAPI) -> None:
@@ -1400,7 +1444,19 @@ def register_routes(app: FastAPI) -> None:
                 user_id=user["id"],
                 user_nickname=user["nickname"],
             )
-            flash(request, f"量表已提交，今日综合心情分为 {scores['mood_score']} 分。", "success")
+            balance_label = (
+                f"{scores['balance_score']:+d}" if scores["balance_score"] else "0"
+            )
+            flash(
+                request,
+                (
+                    "量表已保存："
+                    f"正性情感 {scores['positive_raw']}/25，"
+                    f"负性情感 {scores['negative_raw']}/25，"
+                    f"情感平衡 {balance_label}。"
+                ),
+                "success",
+            )
             return redirect_to(request, "mood_calendar")
 
         return render_template(
@@ -1424,10 +1480,14 @@ def register_routes(app: FastAPI) -> None:
         scored_month_entries = [
             entry for entry in month_entries if entry["record_type"] == "panas"
         ]
-        month_average = (
+        month_average_balance = (
             round(
-                sum(entry["mood_score"] for entry in scored_month_entries)
-                / len(scored_month_entries)
+                sum(
+                    (entry["positive_score"] - entry["negative_score"]) / 5
+                    for entry in scored_month_entries
+                )
+                / len(scored_month_entries),
+                1,
             )
             if scored_month_entries
             else None
@@ -1442,7 +1502,7 @@ def register_routes(app: FastAPI) -> None:
                 "next_month": next_month,
                 "calendar_rows": rows,
                 "month_entries": month_entries,
-                "month_average": month_average,
+                "month_average_balance": month_average_balance,
                 "month_archive_count": sum(
                     entry["record_type"] == "legacy" for entry in month_entries
                 ),
@@ -1899,9 +1959,13 @@ def calculate_panas_scores(responses: dict[str, str]) -> dict[str, Any] | None:
     positive_score = (positive_sum - 5) * 5
     negative_score = (negative_sum - 5) * 5
     mood_score = (positive_score + 100 - negative_score + 1) // 2
+    balance_score = positive_sum - negative_sum
 
     return {
         "responses": numeric_responses,
+        "positive_raw": positive_sum,
+        "negative_raw": negative_sum,
+        "balance_score": balance_score,
         "positive_score": positive_score,
         "negative_score": negative_score,
         "mood_score": mood_score,
