@@ -104,7 +104,7 @@ textarea {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 18px;
   border-top: 1px solid rgba(7, 59, 102, 0.1);
   padding: 10px 20px;
   color: #596574;
@@ -118,6 +118,28 @@ textarea {
   height: 42px;
   flex: 0 0 auto;
   object-fit: contain;
+}
+
+.site-footer-logo {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: center;
+  gap: 1px;
+}
+
+.site-footer-wordmark {
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.nethub-net {
+  color: #101828;
+}
+
+.nethub-hub {
+  color: #0878bd;
 }
 
 .site-footer p {
