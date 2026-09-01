@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}登录 - TechX心情晴雨表{% endblock %}
-{% block body_class %}auth-page{% endblock %}
+{% block body_class %}auth-page login-page{% endblock %}
 
 {% block body %}
 <main class="auth-wrap">
@@ -12,7 +12,7 @@
       aria-hidden="true"
     ></div>
     <div class="auth-panel">
-      <a class="brand" href="{{ url_for('login') }}"><span class="brand-techx">TechX</span>心情晴雨表</a>
+      <a class="brand" href="{{ url_for('login') }}"><span class="brand-tech">Tech</span><span class="brand-x">X</span>心情晴雨表</a>
       <div class="auth-heading">
         <h1>登录账户</h1>
       </div>
@@ -34,5 +34,6 @@
       <p class="auth-switch">还没有账户吗？<a href="{{ url_for('register') }}">注册账户</a></p>
     </div>
   </section>
+
 </main>
 {% endblock %}

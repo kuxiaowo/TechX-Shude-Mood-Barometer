@@ -12,6 +12,7 @@
   --amber: #f59e0b;
   --coral: #e76650;
   --shadow: 0 18px 45px rgba(15, 30, 45, 0.18);
+  --site-footer-height: 68px;
 }
 
 * {
@@ -19,6 +20,9 @@
 }
 
 body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   margin: 0;
   color: var(--ink);
   font-family:
@@ -45,6 +49,17 @@ textarea {
 .auth-page {
   min-height: 100vh;
   background: #f4f7fa;
+}
+
+.login-page {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(8, 120, 189, 0.2), transparent 32%),
+    radial-gradient(circle at 88% 82%, rgba(231, 102, 80, 0.12), transparent 30%),
+    linear-gradient(135deg, #dceef8 0%, #f3f8fb 48%, #dfeaf3 100%);
+}
+
+.login-page .auth-wrap {
+  align-content: center;
 }
 
 .auth-wrap {
@@ -79,6 +94,41 @@ textarea {
   padding: 58px 50px;
 }
 
+.login-page .auth-panel {
+  background: linear-gradient(160deg, #ffffff 0%, #edf6fb 100%);
+}
+
+.site-footer {
+  min-height: var(--site-footer-height);
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-top: 1px solid rgba(7, 59, 102, 0.1);
+  padding: 10px 20px;
+  color: #596574;
+  background: rgba(248, 251, 253, 0.9);
+  font-size: 14px;
+  text-align: center;
+}
+
+.site-footer img {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.site-footer-club {
+  color: var(--ink);
+  font-weight: 800;
+}
+
 .brand,
 .sidebar-brand {
   display: inline-flex;
@@ -95,8 +145,12 @@ textarea {
   text-decoration: none;
 }
 
-.brand-techx {
+.brand-tech {
   color: var(--blue-700);
+}
+
+.brand-x {
+  color: #d92d20;
 }
 
 .auth-heading {
@@ -2252,11 +2306,21 @@ select:disabled {
     padding: 34px 24px;
   }
 
+  .site-footer {
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  .site-footer img {
+    width: 36px;
+    height: 36px;
+  }
+
   .dashboard-shell {
     width: min(100% - 24px, 640px);
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 0;
+    min-height: calc(100vh - 24px);
     margin: 12px auto;
   }
 

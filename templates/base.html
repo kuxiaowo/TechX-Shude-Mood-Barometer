@@ -9,5 +9,9 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block body %}{% endblock %}
+  <footer class="site-footer">
+    <img src="{{ url_for('static', filename='nethub-icon.png') }}" alt="" aria-hidden="true">
+    <p>由 <strong class="site-footer-club">NetHub</strong> 和 <strong class="site-footer-club"><span class="brand-tech">Tech</span><span class="brand-x">X</span></strong> 社团创建与维护</p>
+  </footer>
 </body>
 </html>
