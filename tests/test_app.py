@@ -25,6 +25,7 @@ def app(tmp_path):
             "TESTING": True,
             "DATABASE": str(tmp_path / "mood_test.sqlite3"),
             "SECRET_KEY": "test-secret",
+            "ADMIN_NICKNAME": "admin-user",
         }
     )
 
@@ -128,7 +129,7 @@ def test_auth_pages_use_background_folder(client):
 
 def test_register_privacy_consent_uses_modal_without_expanding_form(client):
     response = client.get("/register")
-    form_start = response.text.index('<form')
+    form_start = response.text.index("<form")
     form_end = response.text.index("</form>", form_start)
     form_html = response.text[form_start:form_end]
 
@@ -238,11 +239,14 @@ def test_admin_can_adjust_registration_rate_limit(app, client):
     )
     assert response.status_code == 200
     assert 'value="2"' in response.text
-    assert rows(
-        app,
-        "SELECT value FROM app_settings WHERE key = ?",
-        ("registration_ip_limit_per_24h",),
-    )[0]["value"] == "2"
+    assert (
+        rows(
+            app,
+            "SELECT value FROM app_settings WHERE key = ?",
+            ("registration_ip_limit_per_24h",),
+        )[0]["value"]
+        == "2"
+    )
 
     invalid = client.post(
         "/admin/settings",
@@ -250,11 +254,14 @@ def test_admin_can_adjust_registration_rate_limit(app, client):
         follow_redirects=True,
     )
     assert invalid.status_code == 200
-    assert rows(
-        app,
-        "SELECT value FROM app_settings WHERE key = ?",
-        ("registration_ip_limit_per_24h",),
-    )[0]["value"] == "2"
+    assert (
+        rows(
+            app,
+            "SELECT value FROM app_settings WHERE key = ?",
+            ("registration_ip_limit_per_24h",),
+        )[0]["value"]
+        == "2"
+    )
 
     client.post("/logout")
     execute(app, "DELETE FROM registration_attempts")
@@ -298,13 +305,6 @@ def test_forwarded_for_is_trusted_only_from_local_proxy():
         "127.0.0.1",
         {"x-forwarded-for": "203.0.113.10, 10.0.0.1"},
     )
-
-
-def panas_data(positive=4, negative=2):
-    return {
-        item["key"]: str(positive if item["dimension"] == "positive" else negative)
-        for item in PANAS_ITEMS
-    }
     untrusted_client = FakeRequest(
         "198.51.100.20",
         {"x-forwarded-for": "203.0.113.11"},
@@ -312,6 +312,13 @@ def panas_data(positive=4, negative=2):
 
     assert get_client_ip(trusted_proxy) == "203.0.113.10"
     assert get_client_ip(untrusted_client) == "198.51.100.20"
+
+
+def panas_data(positive=4, negative=2):
+    return {
+        item["key"]: str(positive if item["dimension"] == "positive" else negative)
+        for item in PANAS_ITEMS
+    }
 
 
 def test_audit_rows_older_than_retention_are_pruned(app, client):
@@ -384,10 +391,7 @@ def test_existing_users_table_gets_grade_and_program_columns(tmp_path):
     migrated_app = create_app(
         {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test-secret"}
     )
-    columns = {
-        row["name"]
-        for row in rows(migrated_app, "PRAGMA table_info(users)")
-    }
+    columns = {row["name"] for row in rows(migrated_app, "PRAGMA table_info(users)")}
 
     assert "grade" in columns
     assert "program" in columns
@@ -497,9 +501,9 @@ def test_existing_user_without_privacy_consent_gets_login_modal(app, client):
         follow_redirects=True,
     )
     assert 'id="privacy-consent-dialog"' in denied.text
-    assert rows(app, "SELECT privacy_consent_at FROM users")[0][
-        "privacy_consent_at"
-    ] == ""
+    assert (
+        rows(app, "SELECT privacy_consent_at FROM users")[0]["privacy_consent_at"] == ""
+    )
 
     accepted = client.post(
         "/privacy-consent",
@@ -507,9 +511,7 @@ def test_existing_user_without_privacy_consent_gets_login_modal(app, client):
         follow_redirects=True,
     )
     assert 'id="privacy-consent-dialog"' not in accepted.text
-    assert rows(app, "SELECT privacy_consent_at FROM users")[0][
-        "privacy_consent_at"
-    ]
+    assert rows(app, "SELECT privacy_consent_at FROM users")[0]["privacy_consent_at"]
 
 
 @pytest.mark.parametrize(
@@ -531,7 +533,7 @@ def test_protected_pages_redirect_to_login(client, path):
     assert "/login" in response.headers["Location"]
 
 
-def test_first_registered_user_can_view_admin_dashboard(app, client):
+def test_configured_admin_user_can_view_admin_dashboard(app, client):
     register(client, nickname="admin-user", real_name="管理员")
     client.post(
         "/mood-report",
@@ -667,9 +669,12 @@ def test_admin_can_change_user_role(app, client):
     )
     assert demoted.status_code == 200
     assert "已将 @student 设为普通用户" in demoted.text
-    assert rows(app, "SELECT is_admin FROM users WHERE id = ?", (student_id,))[0][
-        "is_admin"
-    ] == 0
+    assert (
+        rows(app, "SELECT is_admin FROM users WHERE id = ?", (student_id,))[0][
+            "is_admin"
+        ]
+        == 0
+    )
 
 
 def test_admin_can_disable_and_enable_user_account(app, client):
@@ -689,9 +694,12 @@ def test_admin_can_disable_and_enable_user_account(app, client):
         follow_redirects=True,
     )
     assert "@student 已停用" in disabled.text
-    assert rows(app, "SELECT is_active FROM users WHERE id = ?", (student_id,))[0][
-        "is_active"
-    ] == 0
+    assert (
+        rows(app, "SELECT is_active FROM users WHERE id = ?", (student_id,))[0][
+            "is_active"
+        ]
+        == 0
+    )
 
     client.post("/logout")
     denied = login(client, nickname="student", password="student-pw")
@@ -706,11 +714,14 @@ def test_admin_can_disable_and_enable_user_account(app, client):
     )
     assert "@student 已启用" in enabled.text
     client.post("/logout")
-    assert "用户详情" in login(
-        client,
-        nickname="student",
-        password="student-pw",
-    ).text
+    assert (
+        "用户详情"
+        in login(
+            client,
+            nickname="student",
+            password="student-pw",
+        ).text
+    )
 
 
 def test_admin_can_bulk_delete_users_and_related_data(app, client):
@@ -729,13 +740,9 @@ def test_admin_can_bulk_delete_users_and_related_data(app, client):
 
     user_rows = rows(app, "SELECT id, nickname FROM users ORDER BY id")
     target_ids = [
-        row["id"]
-        for row in user_rows
-        if row["nickname"] in {"student", "other"}
+        row["id"] for row in user_rows if row["nickname"] in {"student", "other"}
     ]
-    student_id = next(
-        row["id"] for row in user_rows if row["nickname"] == "student"
-    )
+    student_id = next(row["id"] for row in user_rows if row["nickname"] == "student")
     execute(
         app,
         """
@@ -770,7 +777,9 @@ def test_admin_can_bulk_delete_users_and_related_data(app, client):
     remaining_users = rows(app, "SELECT nickname FROM users ORDER BY id")
     assert [row["nickname"] for row in remaining_users] == ["admin-user"]
     assert rows(app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 0
-    assert rows(app, "SELECT COUNT(*) AS count FROM legacy_mood_entries")[0]["count"] == 0
+    assert (
+        rows(app, "SELECT COUNT(*) AS count FROM legacy_mood_entries")[0]["count"] == 0
+    )
     assert all(
         row["user_id"] is None
         for row in rows(
@@ -846,10 +855,7 @@ def test_admin_activity_logs_key_actions_and_filters_static_assets(app, client):
     )
     client.get("/static/styles.css")
 
-    actions = {
-        row["action"]
-        for row in rows(app, "SELECT action FROM activity_logs")
-    }
+    actions = {row["action"] for row in rows(app, "SELECT action FROM activity_logs")}
     assert "register_success" in actions
     assert "login_success" in actions
     assert "logout" in actions
@@ -1019,9 +1025,12 @@ def test_non_admin_user_cannot_control_users(app, client):
 
     assert response.status_code == 200
     assert "只有管理员可以访问后台" in response.text
-    assert rows(app, "SELECT is_admin FROM users WHERE nickname = 'student'")[0][
-        "is_admin"
-    ] == 0
+    assert (
+        rows(app, "SELECT is_admin FROM users WHERE nickname = 'student'")[0][
+            "is_admin"
+        ]
+        == 0
+    )
 
     delete_response = client.post(
         "/admin/users/delete",
@@ -1129,9 +1138,7 @@ def test_update_password_requires_current_password_and_updates_hash(app, client)
     assert rows(app, "SELECT password_hash FROM users")[0]["password_hash"] != "pw"
 
 
-def test_mood_submission_keeps_history_and_calendar_uses_latest_score_only(
-    app, client
-):
+def test_mood_submission_keeps_history_and_calendar_uses_latest_score_only(app, client):
     register(client)
 
     first = client.post(
@@ -1222,7 +1229,9 @@ def test_scroll_lists_adapt_to_available_card_height_and_calendar_links_have_no_
     assert "overflow-y: auto;" in history_rule
     assert "overscroll-behavior: contain;" in history_rule
 
-    history_flex_rule_start = styles.index(".adaptive-scroll-card > .history-entry-list {")
+    history_flex_rule_start = styles.index(
+        ".adaptive-scroll-card > .history-entry-list {"
+    )
     history_flex_rule_end = styles.index("}", history_flex_rule_start)
     history_flex_rule = styles[history_flex_rule_start:history_flex_rule_end]
     assert "flex: 1 1 auto;" in history_flex_rule
@@ -1261,22 +1270,19 @@ def test_init_script_creates_systemd_service_from_env_example():
 
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert "BASH_SOURCE" in script
-    assert "need_cmd python3" in script
-    assert "python3 - <<'PY'" in script
+    assert "need_cmd conda" in script
+    assert '"$PYTHON_BIN" - "$INSTALL_SYSTEMD" "$START_SERVICE" <<\'PY\'' in script
     assert "INSTALL_SYSTEMD=1" in script
     assert "START_SERVICE=1" in script
-    assert "MOOD_ADMIN_NICKNAME" in script
-    assert "MOOD_ADMIN_NAME" in script
-    assert "MOOD_ADMIN_PASSWORD" in script
+    assert "MOOD_ADMIN_NICKNAME" not in script
+    assert "MOOD_ADMIN_PASSWORD" not in script
     assert "MOOD_SERVICE_NAME" in script
+    assert "MOOD_CONDA_ENV" in script
     assert "MOOD_PORT" in script
-    assert "importlib.util.spec_from_file_location" in script
-    assert "main.create_app()" not in script
-    assert "mood.init_db(mood.app)" in script
-    assert "mood.generate_password_hash(password)" in script
+    assert "main.init_db(main.app)" in script
     assert "hashlib.pbkdf2_hmac" not in script
     assert "systemd/user" in script
-    assert "ExecStart=/usr/bin/env python3 $APP_DIR/main.py" in script
+    assert "ExecStart=$PYTHON_BIN $APP_DIR/main.py" in script
     assert "Environment=PORT" not in script
     assert "EnvironmentFile" not in script
     assert "systemctl --user daemon-reload" in script
@@ -1288,8 +1294,10 @@ def test_init_script_creates_systemd_service_from_env_example():
     assert "APP_HOST" not in env_example
     assert "MOOD_HOST=127.0.0.1" in env_example
     assert "MOOD_PORT=5000" in env_example
-    assert "MOOD_SECRET_KEY=replace-with-a-random-secret-key" in env_example
-    assert "MOOD_ADMIN_NICKNAME=admin" in env_example
+    assert "MOOD_PUBLIC_BASE_URL=https://" in env_example
+    assert "ACCOUNTS_CLIENT_ID=techx" in env_example
+    assert "ACCOUNTS_CLIENT_SECRET=replace-with-the-client-secret" in env_example
+    assert "MOOD_ADMIN_NICKNAME" not in env_example
 
 
 def test_mood_report_requires_all_ten_valid_panas_answers(client):
@@ -1403,7 +1411,9 @@ def test_sqlite_data_persists_across_app_recreation(tmp_path):
     assert "用户详情" in response.text
     calendar_page = second_client.get("/mood-calendar")
     assert 'style="--score: 100"' in calendar_grid(calendar_page.text)
-    assert rows(second_app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 1
+    assert (
+        rows(second_app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"] == 1
+    )
 
 
 def test_legacy_mood_records_are_archived_and_only_shown_in_calendar_and_history(
@@ -1417,10 +1427,7 @@ def test_legacy_mood_records_are_archived_and_only_shown_in_calendar_and_history
     register(first_client)
     user_id = rows(first_app, "SELECT id FROM users")[0]["id"]
     today = datetime.now().date()
-    old_reason = (
-        "今天做了什么，什么影响了你的心情？\n完成了旧版测试"
-        "\n\n今天身体感觉怎么样？\n有一点疲惫"
-    )
+    old_reason = "今天做了什么，什么影响了你的心情？\n完成了旧版测试\n\n今天身体感觉怎么样？\n有一点疲惫"
 
     with sqlite3.connect(db_path) as db:
         db.execute("DROP INDEX idx_mood_entries_user_date")
@@ -1461,9 +1468,10 @@ def test_legacy_mood_records_are_archived_and_only_shown_in_calendar_and_history
     migrated_client = TestClient(migrated_app, follow_redirects=False)
     login(migrated_client)
 
-    assert rows(migrated_app, "SELECT COUNT(*) AS count FROM mood_entries")[0][
-        "count"
-    ] == 0
+    assert (
+        rows(migrated_app, "SELECT COUNT(*) AS count FROM mood_entries")[0]["count"]
+        == 0
+    )
     archive = rows(migrated_app, "SELECT * FROM legacy_mood_entries")
     assert len(archive) == 1
     assert archive[0]["source_entry_id"] == 77
@@ -1490,7 +1498,10 @@ def test_legacy_mood_records_are_archived_and_only_shown_in_calendar_and_history
     recreated_app = create_app(
         {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test-secret"}
     )
-    assert rows(
-        recreated_app,
-        "SELECT COUNT(*) AS count FROM legacy_mood_entries",
-    )[0]["count"] == 1
+    assert (
+        rows(
+            recreated_app,
+            "SELECT COUNT(*) AS count FROM legacy_mood_entries",
+        )[0]["count"]
+        == 1
+    )

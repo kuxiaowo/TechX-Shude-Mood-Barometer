@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import logging
 import os
 import random
 import sqlite3
@@ -10,15 +11,23 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
+import httpx
 import uvicorn
+from authlib.integrations.base_client import OAuthError
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
-from starlette.middleware.sessions import SessionMiddleware
+from joserfc.errors import JoseError
 from starlette.routing import NoMatchFound
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from techx_auth import (
+    DatabaseSessionMiddleware,
+    configure_oidc,
+    validate_backchannel_logout,
+)
 
 
 def load_env_file(path: Path) -> None:
@@ -36,11 +45,7 @@ def load_env_file(path: Path) -> None:
         if not key:
             continue
 
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in ("'", '"')
-        ):
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
 
         os.environ.setdefault(key, value)
@@ -110,26 +115,74 @@ AUDIT_RETENTION_DAYS = 30
 TRUSTED_PROXY_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+LOGGER = logging.getLogger("techx")
 _USER_NOT_LOADED = object()
+
+
+def validate_service_origin(value: str, setting: str) -> None:
+    parts = urlsplit(value)
+    is_loopback_http = parts.scheme == "http" and parts.hostname in {
+        "127.0.0.1",
+        "::1",
+        "localhost",
+    }
+    if (
+        (parts.scheme != "https" and not is_loopback_http)
+        or not parts.netloc
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or parts.path not in {"", "/"}
+    ):
+        raise ValueError(
+            f"{setting} must be an HTTPS origin without a path "
+            "(loopback HTTP is allowed for development)"
+        )
 
 
 def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     app = FastAPI()
     config = {
-        "SECRET_KEY": os.environ.get("MOOD_SECRET_KEY", "dev-secret-key-change-me"),
+        "TESTING": False,
         "DATABASE": os.environ.get("MOOD_DB_PATH", str(DEFAULT_DATABASE)),
+        "PUBLIC_BASE_URL": os.environ.get(
+            "MOOD_PUBLIC_BASE_URL", "http://127.0.0.1:5000"
+        ).rstrip("/"),
+        "SESSION_COOKIE_SECURE": os.environ.get(
+            "MOOD_SESSION_COOKIE_SECURE", "true"
+        ).lower()
+        in {"1", "true", "yes", "on"},
+        "OIDC_ISSUER": os.environ.get(
+            "ACCOUNTS_ISSUER", "https://auth.nethub.wiki"
+        ).rstrip("/"),
+        "OIDC_CLIENT_ID": os.environ.get("ACCOUNTS_CLIENT_ID", "techx"),
+        "OIDC_CLIENT_SECRET": os.environ.get("ACCOUNTS_CLIENT_SECRET", ""),
+        "OIDC_JWKS": None,
+        "LEGACY_AUTH_ENABLED": False,
         "ADMIN_NICKNAME": os.environ.get("MOOD_ADMIN_NICKNAME", "").strip(),
     }
 
     if test_config:
         config.update(test_config)
+        if test_config.get("TESTING") and "LEGACY_AUTH_ENABLED" not in test_config:
+            config["LEGACY_AUTH_ENABLED"] = True
+        if test_config.get("TESTING") and "SESSION_COOKIE_SECURE" not in test_config:
+            config["SESSION_COOKIE_SECURE"] = False
+
+    validate_service_origin(config["PUBLIC_BASE_URL"], "MOOD_PUBLIC_BASE_URL")
+    validate_service_origin(config["OIDC_ISSUER"], "ACCOUNTS_ISSUER")
+    if not str(config["OIDC_CLIENT_ID"]).strip():
+        raise ValueError("ACCOUNTS_CLIENT_ID cannot be empty")
 
     app.state.config = config
     app.add_middleware(
-        SessionMiddleware,
-        secret_key=config["SECRET_KEY"],
-        same_site="lax",
+        DatabaseSessionMiddleware,
+        database=config["DATABASE"],
+        secure=bool(config["SESSION_COOKIE_SECURE"]),
     )
+    app.state.oauth = configure_oidc(config)
+    app.state.oidc_jwks = config.get("OIDC_JWKS")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.middleware("http")
@@ -194,8 +247,43 @@ def init_db(app: FastAPI) -> None:
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 privacy_consent_at TEXT NOT NULL DEFAULT '',
-                password_hash TEXT NOT NULL,
+                password_hash TEXT NOT NULL DEFAULT '',
+                auth_sub TEXT,
                 created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS web_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER,
+                auth_sub TEXT NOT NULL DEFAULT '',
+                oidc_sid TEXT NOT NULL DEFAULT '',
+                data_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                idle_expires_at INTEGER NOT NULL,
+                absolute_expires_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_web_sessions_user
+                ON web_sessions (user_id);
+
+            CREATE INDEX IF NOT EXISTS idx_web_sessions_auth_sub
+                ON web_sessions (auth_sub);
+
+            CREATE INDEX IF NOT EXISTS idx_web_sessions_oidc_sid
+                ON web_sessions (oidc_sid);
+
+            CREATE TABLE IF NOT EXISTS archived_local_passwords (
+                user_id INTEGER PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                archived_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS backchannel_logout_events (
+                jti TEXT PRIMARY KEY,
+                received_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS mood_entries (
@@ -277,14 +365,14 @@ def init_db(app: FastAPI) -> None:
         ensure_panas_mood_entries_schema(db)
         ensure_default_settings(db)
         prune_old_audit_rows(db)
-        promote_configured_admin(db, app.state.config.get("ADMIN_NICKNAME", ""))
+        prune_expired_sessions(db)
+        if app.state.config["LEGACY_AUTH_ENABLED"]:
+            promote_configured_admin(db, app.state.config.get("ADMIN_NICKNAME", ""))
         db.commit()
 
 
 def ensure_user_profile_columns(db: sqlite3.Connection) -> None:
-    columns = {
-        row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()
-    }
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
     if "grade" not in columns:
         db.execute("ALTER TABLE users ADD COLUMN grade TEXT NOT NULL DEFAULT ''")
     if "program" not in columns:
@@ -297,6 +385,12 @@ def ensure_user_profile_columns(db: sqlite3.Connection) -> None:
         db.execute(
             "ALTER TABLE users ADD COLUMN privacy_consent_at TEXT NOT NULL DEFAULT ''"
         )
+    if "auth_sub" not in columns:
+        db.execute("ALTER TABLE users ADD COLUMN auth_sub TEXT")
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_sub "
+        "ON users (auth_sub) WHERE auth_sub IS NOT NULL"
+    )
 
 
 def ensure_panas_mood_entries_schema(db: sqlite3.Connection) -> None:
@@ -423,25 +517,31 @@ def prune_old_audit_rows(db: sqlite3.Connection) -> None:
     db.execute("DELETE FROM registration_attempts WHERE created_at < ?", (cutoff,))
 
 
+def prune_expired_sessions(db: sqlite3.Connection) -> None:
+    now = int(datetime.now().timestamp())
+    db.execute(
+        "DELETE FROM web_sessions WHERE idle_expires_at <= ? OR absolute_expires_at <= ?",
+        (now, now),
+    )
+
+
 def maybe_prune_audit_rows(request: Request) -> None:
     today = date.today().isoformat()
     if getattr(request.app.state, "audit_pruned_on", None) == today:
         return
 
     prune_old_audit_rows(get_db(request))
+    prune_expired_sessions(get_db(request))
     get_db(request).commit()
     request.app.state.audit_pruned_on = today
 
 
 def promote_configured_admin(db: sqlite3.Connection, nickname: str | None) -> None:
     admin_nickname = (nickname or "").strip()
-    if not admin_nickname:
-        return
-
-    db.execute(
-        "UPDATE users SET is_admin = 1 WHERE nickname = ?",
-        (admin_nickname,),
-    )
+    if admin_nickname:
+        db.execute(
+            "UPDATE users SET is_admin = 1 WHERE nickname = ?", (admin_nickname,)
+        )
 
 
 def get_current_user(request: Request) -> sqlite3.Row | None:
@@ -450,12 +550,18 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
         return cached_user
 
     user_id = request.session.get("user_id")
-    if user_id is None:
+    auth_sub = request.session.get("auth_sub")
+    legacy_auth = bool(request.app.state.config["LEGACY_AUTH_ENABLED"])
+    if user_id is None or (not auth_sub and not legacy_auth):
         request.state.user = None
         return None
 
-    request.state.user = get_db(request).execute(
-        """
+    where_clause = "id = ? AND auth_sub = ?" if auth_sub else "id = ?"
+    parameters = (user_id, auth_sub) if auth_sub else (user_id,)
+    request.state.user = (
+        get_db(request)
+        .execute(
+            f"""
         SELECT
             id,
             real_name,
@@ -465,12 +571,15 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
             is_admin,
             is_active,
             privacy_consent_at,
+            auth_sub,
             created_at
         FROM users
-        WHERE id = ?
+        WHERE {where_clause}
         """,
-        (user_id,),
-    ).fetchone()
+            parameters,
+        )
+        .fetchone()
+    )
     if request.state.user is not None and not request.state.user["is_active"]:
         request.session.clear()
         request.state.user = None
@@ -496,6 +605,15 @@ def require_admin(request: Request) -> sqlite3.Row | RedirectResponse:
     return user
 
 
+def require_privacy_consent(request: Request) -> sqlite3.Row | RedirectResponse:
+    user = require_user(request)
+    if isinstance(user, RedirectResponse):
+        return user
+    if not user["privacy_consent_at"]:
+        return redirect_to(request, "profile")
+    return user
+
+
 def get_client_ip(request: Request) -> str:
     direct_ip = request.client.host if request.client else ""
     if direct_ip in TRUSTED_PROXY_HOSTS:
@@ -507,10 +625,14 @@ def get_client_ip(request: Request) -> str:
 
 
 def get_app_setting(request: Request, key: str, default: str) -> str:
-    row = get_db(request).execute(
-        "SELECT value FROM app_settings WHERE key = ?",
-        (key,),
-    ).fetchone()
+    row = (
+        get_db(request)
+        .execute(
+            "SELECT value FROM app_settings WHERE key = ?",
+            (key,),
+        )
+        .fetchone()
+    )
     if row is None:
         return default
     return str(row["value"])
@@ -705,9 +827,7 @@ def relative_url(url: Any, query_values: dict[str, Any] | None = None) -> str:
 
 def url_path_for(request: Request, endpoint: str, **query_values: Any) -> str:
     path = str(request.app.url_path_for(endpoint))
-    query = {
-        key: value for key, value in query_values.items() if value is not None
-    }
+    query = {key: value for key, value in query_values.items() if value is not None}
     if query:
         return f"{path}?{urlencode(query, doseq=True)}"
     return path
@@ -753,6 +873,9 @@ def render_template(
             "programs": PROGRAMS,
             "current_user": get_current_user(request),
             "auth_background_url": get_auth_background_url(),
+            "accounts_account_url": f"{request.app.state.config['OIDC_ISSUER']}/account",
+            "accounts_logout_url": f"{request.app.state.config['OIDC_ISSUER']}/oauth/logout",
+            "legacy_auth_enabled": request.app.state.config["LEGACY_AUTH_ENABLED"],
             **(context or {}),
         },
         status_code=status_code,
@@ -772,6 +895,81 @@ def get_auth_background_url() -> str:
         return "/static/login-campus.png"
 
     return f"/static/login-backgrounds/{random.choice(filenames)}"
+
+
+def safe_next_url(value: str | None, default: str = "/profile") -> str:
+    if not value:
+        return default
+    parts = urlsplit(value)
+    if (
+        parts.scheme
+        or parts.netloc
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(character) < 32 for character in value)
+    ):
+        return default
+    return value
+
+
+def unique_local_nickname(db: sqlite3.Connection, preferred: str, auth_sub: str) -> str:
+    base = preferred.strip()[:32] or f"user-{auth_sub[:8]}"
+    if db.execute("SELECT 1 FROM users WHERE nickname = ?", (base,)).fetchone() is None:
+        return base
+    suffix = f"-{auth_sub[:8]}"
+    candidate = base[: 32 - len(suffix)] + suffix
+    counter = 2
+    while db.execute("SELECT 1 FROM users WHERE nickname = ?", (candidate,)).fetchone():
+        suffix = f"-{auth_sub[:6]}-{counter}"
+        candidate = base[: 32 - len(suffix)] + suffix
+        counter += 1
+    return candidate
+
+
+def find_or_create_oidc_user(
+    request: Request,
+    userinfo: dict[str, Any],
+) -> tuple[sqlite3.Row, bool]:
+    auth_sub = str(userinfo.get("sub", "")).strip()
+    preferred = str(userinfo.get("preferred_username", "")).strip()
+    display_name = str(userinfo.get("name", "")).strip() or preferred
+    if not auth_sub or not preferred:
+        raise ValueError("OIDC userinfo is missing sub or preferred_username")
+    db = get_db(request)
+    user = db.execute("SELECT * FROM users WHERE auth_sub = ?", (auth_sub,)).fetchone()
+    if user:
+        return user, False
+
+    nickname = unique_local_nickname(db, preferred, auth_sub)
+    now = datetime.now().isoformat(timespec="seconds")
+    cursor = db.execute(
+        """
+        INSERT INTO users (
+            real_name, nickname, grade, program, is_admin, is_active,
+            privacy_consent_at, password_hash, auth_sub, created_at
+        ) VALUES (?, ?, '', '', 0, 1, '', '', ?, ?)
+        """,
+        (display_name[:64], nickname, auth_sub, now),
+    )
+    db.commit()
+    user = db.execute(
+        "SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return user, True
+
+
+async def oidc_jwks(request: Request, *, force_refresh: bool = False) -> dict[str, Any]:
+    cached = request.app.state.oidc_jwks
+    if cached and not force_refresh:
+        return cached
+    issuer = request.app.state.config["OIDC_ISSUER"]
+    async with httpx.AsyncClient(timeout=3) as client:
+        response = await client.get(f"{issuer}/.well-known/jwks.json")
+        response.raise_for_status()
+        payload = response.json()
+    request.app.state.oidc_jwks = payload
+    return payload
 
 
 def datetime_cn(value: str | None) -> str:
@@ -820,8 +1018,7 @@ def panas_response_details(value: str | None) -> list[dict[str, Any]]:
         responses = {}
 
     option_labels = {
-        int(option["value"]): str(option["label"])
-        for option in PANAS_RESPONSE_OPTIONS
+        int(option["value"]): str(option["label"]) for option in PANAS_RESPONSE_OPTIONS
     }
     details = []
     for item in PANAS_ITEMS:
@@ -881,11 +1078,164 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/", name="index")
     async def index(request: Request):
         if get_current_user(request) is None:
-            return redirect_to(request, "login")
+            return redirect_to(request, "auth_login")
         return redirect_to(request, "profile")
+
+    @app.get("/auth/login", name="auth_login")
+    async def auth_login(request: Request):
+        next_url = safe_next_url(request.query_params.get("next"))
+        if get_current_user(request) is not None:
+            return RedirectResponse(next_url, status_code=302)
+        config = request.app.state.config
+        if not config["OIDC_CLIENT_SECRET"]:
+            return render_template(
+                request,
+                "auth_error.html",
+                {"auth_error": "TechX 尚未配置统一账号客户端密钥。"},
+                status_code=503,
+            )
+        request.session["oidc_next"] = next_url
+        redirect_uri = f"{config['PUBLIC_BASE_URL']}/auth/callback"
+        try:
+            return await request.app.state.oauth.nethub.authorize_redirect(
+                request,
+                redirect_uri,
+            )
+        except (OAuthError, httpx.HTTPError, RuntimeError) as exc:
+            LOGGER.error("OIDC authorization failed: %s", exc)
+            return render_template(
+                request,
+                "auth_error.html",
+                {"auth_error": "统一账号服务暂时不可用，请稍后重试。"},
+                status_code=502,
+            )
+
+    @app.get("/auth/callback", name="auth_callback")
+    async def auth_callback(request: Request):
+        next_url = safe_next_url(request.session.get("oidc_next"))
+        try:
+            token = await request.app.state.oauth.nethub.authorize_access_token(request)
+            userinfo = dict(token.get("userinfo") or {})
+            oidc_sid = str(userinfo.get("sid", "")).strip()
+            if not oidc_sid:
+                raise ValueError("OIDC ID Token is missing sid")
+            user, created = find_or_create_oidc_user(request, userinfo)
+            if not user["is_active"]:
+                request.session.clear()
+                return render_template(
+                    request,
+                    "auth_error.html",
+                    {"auth_error": "此 TechX 本地成员已被停用，请联系网站管理员。"},
+                    status_code=403,
+                )
+        except (
+            OAuthError,
+            JoseError,
+            httpx.HTTPError,
+            KeyError,
+            ValueError,
+            sqlite3.Error,
+        ) as exc:
+            LOGGER.warning("OIDC callback failed: %s", exc)
+            request.session.clear()
+            return render_template(
+                request,
+                "auth_error.html",
+                {"auth_error": "统一登录验证失败，请返回后重新登录。"},
+                status_code=400,
+            )
+
+        request.session.clear()
+        request.session.update(
+            {
+                "user_id": int(user["id"]),
+                "nickname": str(user["nickname"]),
+                "auth_sub": str(user["auth_sub"]),
+                "oidc_sid": oidc_sid,
+                "_rotate": True,
+            }
+        )
+        request.state.user = None
+        record_activity(
+            request,
+            "operation",
+            "oidc_member_created" if created else "oidc_login_success",
+            status_code=302,
+            user_id=user["id"],
+            user_nickname=user["nickname"],
+        )
+        return RedirectResponse(next_url, status_code=302)
+
+    @app.post("/auth/backchannel-logout", name="auth_backchannel_logout")
+    async def auth_backchannel_logout(request: Request):
+        try:
+            content_length = int(request.headers.get("content-length", "0"))
+            if content_length <= 0 or content_length > 32768:
+                raise ValueError("invalid request body size")
+            form = await request.form()
+            logout_token = str(form.get("logout_token", ""))
+            if not logout_token:
+                raise ValueError("missing logout_token")
+            try:
+                claims = validate_backchannel_logout(
+                    logout_token,
+                    jwks=await oidc_jwks(request),
+                    issuer=request.app.state.config["OIDC_ISSUER"],
+                    client_id=request.app.state.config["OIDC_CLIENT_ID"],
+                )
+            except JoseError:
+                claims = validate_backchannel_logout(
+                    logout_token,
+                    jwks=await oidc_jwks(request, force_refresh=True),
+                    issuer=request.app.state.config["OIDC_ISSUER"],
+                    client_id=request.app.state.config["OIDC_CLIENT_ID"],
+                )
+        except (JoseError, ValueError, httpx.HTTPError) as exc:
+            LOGGER.warning("Invalid back-channel logout: %s", exc)
+            return JSONResponse({"error": "invalid_logout_token"}, status_code=400)
+
+        db = get_db(request)
+        db.execute("BEGIN IMMEDIATE")
+        if db.execute(
+            "SELECT 1 FROM backchannel_logout_events WHERE jti = ?",
+            (str(claims["jti"]),),
+        ).fetchone():
+            db.commit()
+            return JSONResponse({"ok": True, "revoked": 0})
+        if claims.get("sid"):
+            cursor = db.execute(
+                "DELETE FROM web_sessions WHERE oidc_sid = ?",
+                (str(claims["sid"]),),
+            )
+        else:
+            cursor = db.execute(
+                "DELETE FROM web_sessions WHERE auth_sub = ?",
+                (str(claims["sub"]),),
+            )
+        db.execute(
+            "INSERT INTO backchannel_logout_events (jti, received_at) VALUES (?, ?)",
+            (str(claims["jti"]), datetime.now().isoformat(timespec="seconds")),
+        )
+        cutoff = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
+        db.execute(
+            "DELETE FROM backchannel_logout_events WHERE received_at < ?", (cutoff,)
+        )
+        db.commit()
+        return JSONResponse({"ok": True, "revoked": cursor.rowcount})
+
+    @app.get("/auth/logged-out", name="auth_logged_out")
+    async def auth_logged_out(request: Request):
+        return render_template(request, "logged_out.html")
 
     @app.api_route("/register", methods=["GET", "POST"], name="register")
     async def register(request: Request):
+        if not request.app.state.config["LEGACY_AUTH_ENABLED"]:
+            if request.method == "POST":
+                return JSONResponse(
+                    {"error": "local_registration_disabled"}, status_code=410
+                )
+            return redirect_to(request, "auth_login")
+
         if get_current_user(request) is not None:
             return redirect_to(request, "profile")
 
@@ -944,7 +1294,9 @@ def register_routes(app: FastAPI) -> None:
                 return render_template(request, "register.html")
 
             if not privacy_consent:
-                update_registration_attempt(request, attempt_id, "privacy_consent_missing")
+                update_registration_attempt(
+                    request, attempt_id, "privacy_consent_missing"
+                )
                 record_activity(
                     request,
                     "operation",
@@ -963,7 +1315,9 @@ def register_routes(app: FastAPI) -> None:
                 )
                 return render_template(request, "register.html")
 
-            if not is_valid_optional_choice(grade, GRADES) or not is_valid_optional_choice(
+            if not is_valid_optional_choice(
+                grade, GRADES
+            ) or not is_valid_optional_choice(
                 program,
                 PROGRAMS,
             ):
@@ -981,13 +1335,10 @@ def register_routes(app: FastAPI) -> None:
 
             try:
                 db = get_db(request)
-                user_count = db.execute(
-                    "SELECT COUNT(*) AS count FROM users",
-                ).fetchone()["count"]
                 configured_admin = (
                     request.app.state.config.get("ADMIN_NICKNAME") or ""
                 ).strip()
-                is_admin = int(user_count == 0 or nickname == configured_admin)
+                is_admin = int(bool(configured_admin) and nickname == configured_admin)
                 created_at = datetime.now().isoformat(timespec="seconds")
                 db.execute(
                     """
@@ -1029,10 +1380,14 @@ def register_routes(app: FastAPI) -> None:
                 flash(request, "这个昵称已经被注册，请换一个。", "error")
                 return render_template(request, "register.html")
 
-            user = get_db(request).execute(
-                "SELECT id, nickname FROM users WHERE nickname = ?",
-                (nickname,),
-            ).fetchone()
+            user = (
+                get_db(request)
+                .execute(
+                    "SELECT id, nickname FROM users WHERE nickname = ?",
+                    (nickname,),
+                )
+                .fetchone()
+            )
             update_registration_attempt(request, attempt_id, "success", user["id"])
             record_activity(
                 request,
@@ -1047,6 +1402,7 @@ def register_routes(app: FastAPI) -> None:
             request.session.clear()
             request.session["user_id"] = user["id"]
             request.session["nickname"] = user["nickname"]
+            request.session["_rotate"] = True
             flash(request, "注册成功，欢迎开始记录今天的心情。", "success")
             return redirect_to(request, "profile")
 
@@ -1054,6 +1410,15 @@ def register_routes(app: FastAPI) -> None:
 
     @app.api_route("/login", methods=["GET", "POST"], name="login")
     async def login(request: Request):
+        if not request.app.state.config["LEGACY_AUTH_ENABLED"]:
+            if request.method == "POST":
+                return JSONResponse(
+                    {"error": "local_password_login_disabled"}, status_code=410
+                )
+            return redirect_to(
+                request, "auth_login", next=request.query_params.get("next")
+            )
+
         if get_current_user(request) is not None:
             return redirect_to(request, "profile")
 
@@ -1061,10 +1426,14 @@ def register_routes(app: FastAPI) -> None:
             form = await request.form()
             nickname = str(form.get("nickname", "")).strip()
             password = str(form.get("password", ""))
-            user = get_db(request).execute(
-                "SELECT * FROM users WHERE nickname = ?",
-                (nickname,),
-            ).fetchone()
+            user = (
+                get_db(request)
+                .execute(
+                    "SELECT * FROM users WHERE nickname = ?",
+                    (nickname,),
+                )
+                .fetchone()
+            )
 
             if user is None or not check_password_hash(user["password_hash"], password):
                 record_activity(
@@ -1093,6 +1462,7 @@ def register_routes(app: FastAPI) -> None:
             request.session.clear()
             request.session["user_id"] = user["id"]
             request.session["nickname"] = user["nickname"]
+            request.session["_rotate"] = True
             record_activity(
                 request,
                 "operation",
@@ -1121,7 +1491,7 @@ def register_routes(app: FastAPI) -> None:
             user_nickname=user["nickname"] if user is not None else "",
         )
         request.session.clear()
-        return redirect_to(request, "login")
+        return redirect_to(request, "auth_logged_out")
 
     @app.post("/privacy-consent", name="accept_privacy_consent")
     async def accept_privacy_consent(request: Request):
@@ -1298,6 +1668,11 @@ def register_routes(app: FastAPI) -> None:
 
     @app.post("/profile/password", name="update_password")
     async def update_password(request: Request):
+        if not request.app.state.config["LEGACY_AUTH_ENABLED"]:
+            return JSONResponse(
+                {"error": "local_password_management_disabled"}, status_code=410
+            )
+
         user = require_user(request)
         if isinstance(user, RedirectResponse):
             return user
@@ -1333,10 +1708,14 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "两次输入的新密码不一致。", "error")
             return redirect_to(request, "profile")
 
-        db_user = get_db(request).execute(
-            "SELECT password_hash FROM users WHERE id = ?",
-            (user["id"],),
-        ).fetchone()
+        db_user = (
+            get_db(request)
+            .execute(
+                "SELECT password_hash FROM users WHERE id = ?",
+                (user["id"],),
+            )
+            .fetchone()
+        )
         if db_user is None or not check_password_hash(
             db_user["password_hash"], current_password
         ):
@@ -1370,7 +1749,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.api_route("/mood-report", methods=["GET", "POST"], name="mood_report")
     async def mood_report(request: Request):
-        user = require_user(request)
+        user = require_privacy_consent(request)
         if isinstance(user, RedirectResponse):
             return user
 
@@ -1470,7 +1849,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/mood-calendar", name="mood_calendar")
     async def mood_calendar(request: Request):
-        user = require_user(request)
+        user = require_privacy_consent(request)
         if isinstance(user, RedirectResponse):
             return user
 
@@ -1512,7 +1891,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/mood-trends", name="mood_trends")
     async def mood_trends(request: Request):
-        user = require_user(request)
+        user = require_privacy_consent(request)
         if isinstance(user, RedirectResponse):
             return user
 
@@ -1529,7 +1908,7 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/mood-history", name="mood_history")
     async def mood_history(request: Request):
-        user = require_user(request)
+        user = require_privacy_consent(request)
         if isinstance(user, RedirectResponse):
             return user
 
@@ -1603,10 +1982,7 @@ def register_routes(app: FastAPI) -> None:
             except ValueError:
                 registration_limit = 0
 
-            if (
-                registration_limit < 1
-                or registration_limit > REGISTRATION_IP_LIMIT_MAX
-            ):
+            if registration_limit < 1 or registration_limit > REGISTRATION_IP_LIMIT_MAX:
                 record_activity(
                     request,
                     "operation",
@@ -1749,21 +2125,28 @@ def register_routes(app: FastAPI) -> None:
             return redirect_to(request, "admin_dashboard")
 
         placeholders = sql_placeholders(deletable_ids)
-        target_users = get_db(request).execute(
-            f"""
+        target_users = (
+            get_db(request)
+            .execute(
+                f"""
             SELECT id, nickname
             FROM users
             WHERE id IN ({placeholders})
             """,
-            tuple(deletable_ids),
-        ).fetchall()
+                tuple(deletable_ids),
+            )
+            .fetchall()
+        )
         if not target_users:
             record_activity(
                 request,
                 "operation",
                 "admin_delete_users_failed",
                 status_code=404,
-                metadata={"reason": "no_matching_users", "selected_user_ids": selected_ids},
+                metadata={
+                    "reason": "no_matching_users",
+                    "selected_user_ids": selected_ids,
+                },
                 user_id=user["id"],
                 user_nickname=user["nickname"],
             )
@@ -1771,7 +2154,9 @@ def register_routes(app: FastAPI) -> None:
             return redirect_to(request, "admin_dashboard")
 
         target_ids = [int(target_user["id"]) for target_user in target_users]
-        target_nicknames = [str(target_user["nickname"]) for target_user in target_users]
+        target_nicknames = [
+            str(target_user["nickname"]) for target_user in target_users
+        ]
         target_placeholders = sql_placeholders(target_ids)
         target_params = tuple(target_ids)
         db = get_db(request)
@@ -1833,10 +2218,14 @@ def register_routes(app: FastAPI) -> None:
 
         form = await request.form()
         role = str(form.get("role", "")).strip()
-        target_user = get_db(request).execute(
-            "SELECT id, nickname, is_admin FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
+        target_user = (
+            get_db(request)
+            .execute(
+                "SELECT id, nickname, is_admin FROM users WHERE id = ?",
+                (user_id,),
+            )
+            .fetchone()
+        )
         if target_user is None:
             flash(request, "没有找到这个用户。", "error")
             return redirect_to(request, "admin_dashboard")
@@ -1883,10 +2272,14 @@ def register_routes(app: FastAPI) -> None:
 
         form = await request.form()
         status = str(form.get("status", "")).strip()
-        target_user = get_db(request).execute(
-            "SELECT id, nickname, is_active FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
+        target_user = (
+            get_db(request)
+            .execute(
+                "SELECT id, nickname, is_active FROM users WHERE id = ?",
+                (user_id,),
+            )
+            .fetchone()
+        )
         if target_user is None:
             flash(request, "没有找到这个用户。", "error")
             return redirect_to(request, "admin_dashboard")
@@ -1977,8 +2370,10 @@ def get_recent_entries(
     user_id: int,
     limit: int = 3,
 ) -> list[sqlite3.Row]:
-    return get_db(request).execute(
-        """
+    return (
+        get_db(request)
+        .execute(
+            """
         SELECT
             id,
             panas_responses,
@@ -1992,13 +2387,17 @@ def get_recent_entries(
         ORDER BY created_at DESC, id DESC
         LIMIT ?
         """,
-        (user_id, limit),
-    ).fetchall()
+            (user_id, limit),
+        )
+        .fetchall()
+    )
 
 
 def get_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]:
-    return get_db(request).execute(
-        """
+    return (
+        get_db(request)
+        .execute(
+            """
         SELECT
             id,
             panas_responses,
@@ -2011,13 +2410,17 @@ def get_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]:
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
         """,
-        (user_id,),
-    ).fetchall()
+            (user_id,),
+        )
+        .fetchall()
+    )
 
 
 def get_legacy_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]:
-    return get_db(request).execute(
-        """
+    return (
+        get_db(request)
+        .execute(
+            """
         SELECT
             id,
             source_entry_id,
@@ -2031,8 +2434,10 @@ def get_legacy_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
         """,
-        (user_id,),
-    ).fetchall()
+            (user_id,),
+        )
+        .fetchall()
+    )
 
 
 def get_mood_chart_data(
@@ -2041,8 +2446,10 @@ def get_mood_chart_data(
     days: int,
 ) -> list[dict[str, Any]]:
     start_date = date.today() - timedelta(days=days - 1)
-    entries = get_db(request).execute(
-        """
+    entries = (
+        get_db(request)
+        .execute(
+            """
         SELECT
             mood_score,
             positive_score,
@@ -2054,8 +2461,10 @@ def get_mood_chart_data(
         WHERE user_id = ? AND entry_date BETWEEN ? AND ?
         ORDER BY entry_date ASC, created_at ASC, id ASC
         """,
-        (user_id, start_date.isoformat(), date.today().isoformat()),
-    ).fetchall()
+            (user_id, start_date.isoformat(), date.today().isoformat()),
+        )
+        .fetchall()
+    )
 
     latest_by_day = {entry["entry_date"]: entry for entry in entries}
     chart_data = []
@@ -2075,18 +2484,24 @@ def get_mood_chart_data(
 
 
 def get_admin_stats(request: Request) -> dict[str, int]:
-    row = get_db(request).execute(
-        """
+    row = (
+        get_db(request)
+        .execute(
+            """
         SELECT
             COUNT(*) AS user_count,
             SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active_count,
             SUM(CASE WHEN is_admin = 1 THEN 1 ELSE 0 END) AS admin_count
         FROM users
         """
-    ).fetchone()
-    entry_count = get_db(request).execute(
-        "SELECT COUNT(*) AS count FROM mood_entries"
-    ).fetchone()["count"]
+        )
+        .fetchone()
+    )
+    entry_count = (
+        get_db(request)
+        .execute("SELECT COUNT(*) AS count FROM mood_entries")
+        .fetchone()["count"]
+    )
     return {
         "user_count": int(row["user_count"] or 0),
         "active_count": int(row["active_count"] or 0),
@@ -2376,8 +2791,10 @@ def get_activity_user_stats(
     request: Request,
     limit: int = 50,
 ) -> list[sqlite3.Row]:
-    return get_db(request).execute(
-        """
+    return (
+        get_db(request)
+        .execute(
+            """
         SELECT
             activity_logs.user_id,
             COALESCE(NULLIF(users.real_name, ''), '匿名访问') AS real_name,
@@ -2395,8 +2812,10 @@ def get_activity_user_stats(
         ORDER BY latest_activity_at DESC, activity_count DESC
         LIMIT ?
         """,
-        (limit,),
-    ).fetchall()
+            (limit,),
+        )
+        .fetchall()
+    )
 
 
 def parse_month(month_value: str | None) -> date:

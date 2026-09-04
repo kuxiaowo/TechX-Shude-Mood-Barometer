@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}统一登录失败 - TechX心情晴雨表{% endblock %}
+{% block body_class %}auth-page login-page{% endblock %}
+
+{% block body %}
+<main class="auth-wrap">
+  <section class="auth-card">
+    <div class="auth-visual" style="--auth-background-image: url('{{ auth_background_url }}');" aria-hidden="true"></div>
+    <div class="auth-panel">
+      <a class="brand" href="{{ url_for('index') }}"><span class="brand-tech">Tech</span><span class="brand-x">X</span>心情晴雨表</a>
+      <div class="auth-heading"><p class="eyebrow">NetHub Accounts</p><h1>登录暂未完成</h1></div>
+      <p>{{ auth_error }}</p>
+      <a class="primary-button" href="{{ url_for('auth_login') }}">重新登录</a>
+    </div>
+  </section>
+</main>
+{% endblock %}
