@@ -141,6 +141,25 @@ def validate_service_origin(value: str, setting: str) -> None:
         )
 
 
+def browser_request_is_same_origin(request: Request, public_base_url: str) -> bool:
+    fetch_site = request.headers.get("sec-fetch-site", "").casefold()
+    if fetch_site and fetch_site != "same-origin":
+        return False
+    origin = request.headers.get("origin")
+    if not origin:
+        # Non-browser clients generally omit both Origin and Sec-Fetch-Site.
+        return not fetch_site
+    expected = urlsplit(public_base_url)
+    actual = urlsplit(origin)
+    return (
+        actual.scheme.casefold() == expected.scheme.casefold()
+        and actual.netloc.casefold() == expected.netloc.casefold()
+        and not actual.path.rstrip("/")
+        and not actual.query
+        and not actual.fragment
+    )
+
+
 def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     app = FastAPI()
     config = {
@@ -189,6 +208,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     async def close_database_after_request(request: Request, call_next):
         response = None
         try:
+            if (
+                request.method in {"POST", "PUT", "PATCH", "DELETE"}
+                and request.url.path != "/auth/backchannel-logout"
+                and not browser_request_is_same_origin(request, config["PUBLIC_BASE_URL"])
+            ):
+                return JSONResponse(
+                    status_code=403, content={"detail": "拒绝跨站请求"}
+                )
             response = await call_next(request)
             if should_log_access(request):
                 record_activity(

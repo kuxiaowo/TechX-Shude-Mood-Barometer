@@ -35,6 +35,26 @@ def client(app):
     return TestClient(app, follow_redirects=False)
 
 
+def test_cross_origin_mutation_is_rejected(app, client):
+    rejected = client.post(
+        "/logout",
+        headers={
+            "Origin": "https://evil.nethub.wiki",
+            "Sec-Fetch-Site": "same-site",
+        },
+    )
+    assert rejected.status_code == 403
+
+    accepted = client.post(
+        "/logout",
+        headers={
+            "Origin": app.state.config["PUBLIC_BASE_URL"],
+            "Sec-Fetch-Site": "same-origin",
+        },
+    )
+    assert accepted.status_code == 302
+
+
 def register(
     client,
     nickname="sunny",
