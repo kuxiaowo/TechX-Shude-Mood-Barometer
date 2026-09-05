@@ -32,6 +32,7 @@
       {% endif %}
     </nav>
 
+    <a class="ghost-button account-center-button" href="{{ accounts_account_url }}">前往账户中心</a>
     <form class="logout-form" method="post" action="{{ url_for('logout') }}">
       <button class="ghost-button" type="submit">退出登录</button>
     </form>

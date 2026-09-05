@@ -497,6 +497,15 @@ textarea:focus {
   margin-top: auto;
 }
 
+.account-center-button {
+  margin-top: auto;
+  text-align: center;
+}
+
+.account-center-button + .logout-form {
+  margin-top: 8px;
+}
+
 .sidebar-user {
   display: flex;
   gap: 12px;
