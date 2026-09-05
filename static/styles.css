@@ -499,7 +499,11 @@ textarea:focus {
 
 .account-center-button {
   margin-top: auto;
+  width: 100%;
+  gap: 8px;
   text-align: center;
+  text-decoration: none;
+  box-shadow: 0 8px 20px rgba(9, 119, 229, 0.24);
 }
 
 .account-center-button + .logout-form {
@@ -2082,6 +2086,19 @@ textarea:focus {
   color: #fff;
   background: rgba(255, 255, 255, 0.08);
   text-decoration: none;
+}
+
+.admin-console-account-button {
+  justify-content: space-between;
+  border-color: rgba(93, 180, 255, 0.48);
+  background: rgba(9, 119, 229, 0.28);
+  color: #fff;
+  text-decoration: none;
+}
+
+.admin-console-account-button:hover {
+  border-color: rgba(128, 200, 255, 0.72);
+  background: rgba(9, 119, 229, 0.44);
 }
 
 .admin-console-main {
