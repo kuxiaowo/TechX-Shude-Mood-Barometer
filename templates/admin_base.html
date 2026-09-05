@@ -23,7 +23,7 @@
     </nav>
 
     <div class="admin-console-account">
-      <span class="admin-console-avatar">{{ current_user["real_name"][:1] }}</span>
+      <span class="admin-console-avatar central-avatar">{{ current_user["real_name"][:1] }}{% if accounts_avatar_url(current_user) %}<img src="{{ accounts_avatar_url(current_user) }}" alt="" onerror="this.remove()">{% endif %}</span>
       <div><strong>{{ current_user["real_name"] }}</strong><small>@{{ current_user["nickname"] }}</small></div>
     </div>
     <a class="admin-console-return" href="{{ accounts_account_url }}" target="_blank" rel="noopener noreferrer">前往账户中心</a>

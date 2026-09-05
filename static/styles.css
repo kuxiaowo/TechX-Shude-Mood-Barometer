@@ -527,6 +527,13 @@ textarea:focus {
   font-weight: 900;
 }
 
+.central-avatar { position: relative; overflow: hidden; display: grid; place-items: center; border-radius: 50%; background: #6366f1; color: #fff; font-weight: 800; flex: 0 0 auto; }
+.central-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.profile-central-avatar { width: 72px; height: 72px; font-size: 26px; margin-top: 8px; }
+.profile-avatar-tile { min-height: 190px; }
+.admin-list-avatar { width: 44px; height: 44px; margin-right: 12px; }
+.admin-detail-avatar { width: 64px; height: 64px; font-size: 22px; }
+
 .sidebar-user span {
   display: block;
   color: var(--muted);

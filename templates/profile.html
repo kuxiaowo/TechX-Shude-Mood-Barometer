@@ -14,6 +14,11 @@
 </section>
 
 <section class="profile-grid" aria-label="用户资料">
+  <div class="info-tile profile-avatar-tile">
+    <span>统一头像</span>
+    <div class="profile-central-avatar central-avatar">{{ current_user["real_name"][:1] }}{% if accounts_avatar_url(current_user) %}<img src="{{ accounts_avatar_url(current_user) }}" alt="" onerror="this.remove()">{% endif %}</div>
+    <a class="outline-button info-action" href="{{ accounts_account_url }}" target="_blank" rel="noopener noreferrer">修改头像</a>
+  </div>
   <div class="info-tile">
     <span>姓名</span>
     <strong>{{ current_user["real_name"] }}</strong>
