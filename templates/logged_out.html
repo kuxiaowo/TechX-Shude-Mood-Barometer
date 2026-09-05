@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}已退出 TechX{% endblock %}
+{% block body_class %}auth-page login-page{% endblock %}
+
+{% block body %}
+<main class="auth-wrap">
+  <section class="auth-card">
+    <div class="auth-visual" style="--auth-background-image: url('{{ auth_background_url }}');" aria-hidden="true"></div>
+    <div class="auth-panel">
+      <a class="brand" href="{{ url_for('index') }}"><span class="brand-tech">Tech</span><span class="brand-x">X</span>心情晴雨表</a>
+      <div class="auth-heading"><p class="eyebrow">LOCAL LOGOUT</p><h1>已退出 TechX</h1></div>
+      <p>统一账号仍保持登录。需要再次进入时，不必重复输入密码。</p>
+      <a class="primary-button" href="{{ url_for('auth_login') }}">重新进入 TechX</a>
+      <p class="auth-switch"><a href="{{ accounts_logout_url }}">退出统一账号及所有网站</a></p>
+    </div>
+  </section>
+</main>
+{% endblock %}

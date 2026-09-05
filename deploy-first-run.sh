@@ -4,6 +4,8 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="${MOOD_SERVICE_NAME:-techx-shude-mood-barometer.service}"
 PORT="${MOOD_PORT:-5000}"
+CONDA_ENV_NAME="${MOOD_CONDA_ENV:-techx-shude-mood-barometer}"
+PYTHON_VERSION="${MOOD_PYTHON_VERSION:-3.12}"
 INSTALL_SYSTEMD=1
 START_SERVICE=1
 
@@ -20,20 +22,20 @@ TechX Shude Mood Barometer 第一次部署脚本
   -h, --help     显示帮助
 
 可选环境变量：
-  MOOD_ADMIN_NICKNAME   预创建管理员昵称
-  MOOD_ADMIN_NAME       预创建管理员姓名，默认同昵称
-  MOOD_ADMIN_PASSWORD   预创建管理员密码；为空则不创建管理员
   MOOD_SERVICE_NAME     systemd 服务名，默认 techx-shude-mood-barometer.service
+  MOOD_CONDA_ENV        Conda 环境名，默认 techx-shude-mood-barometer
+  MOOD_PYTHON_VERSION   Python 版本，默认 3.12
   MOOD_PORT             仅用于脚本输出提示；实际监听端口由 .env、外部环境变量或程序默认值决定
 
 示例：
   chmod +x deploy-first-run.sh
-  MOOD_ADMIN_NICKNAME=admin MOOD_ADMIN_PASSWORD='换成强密码' ./deploy-first-run.sh
+  ./deploy-first-run.sh
 
 说明：
   - 数据库使用 SQLite，默认文件位于 ./data/mood_barometer.sqlite3
   - 不需要安装 MySQL/PostgreSQL
-  - Python 的 sqlite3 模块随 Python 标准库提供
+  - Python 依赖安装在独立 Conda 环境中
+  - 管理员身份来自迁移后的 TechX 本地角色，不会自动创建首个管理员
 EOF
 }
 
@@ -65,86 +67,53 @@ log() {
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "缺少命令: $1" >&2
-    echo "Ubuntu/Debian 可执行: sudo apt update && sudo apt install -y python3" >&2
+    echo "请先安装 Miniconda 或 Anaconda，并确保 conda 命令可用。" >&2
     exit 1
   fi
 }
 
-need_cmd python3
+need_cmd conda
 
 log "应用目录: $APP_DIR"
 cd "$APP_DIR"
 
-if [[ ! -f main.py || ! -d templates || ! -d static ]]; then
-  echo "当前目录缺少 main.py、templates 或 static，请在解压后的项目根目录内运行。" >&2
+if [[ ! -f main.py || ! -f requirements.txt || ! -f .env.example || ! -d templates || ! -d static ]]; then
+  echo "项目文件不完整，请在完整的 TechX 项目根目录运行。" >&2
   exit 1
 fi
+
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  log "已从 .env.example 创建 .env；启动前必须填写 OIDC 客户端密钥。"
+fi
+chmod 600 .env
+
+if ! conda run -n "$CONDA_ENV_NAME" python -c 'import sys' >/dev/null 2>&1; then
+  log "创建 Conda 环境 $CONDA_ENV_NAME (Python $PYTHON_VERSION)"
+  conda create --yes --name "$CONDA_ENV_NAME" "python=$PYTHON_VERSION" pip
+fi
+PYTHON_BIN="$(conda run -n "$CONDA_ENV_NAME" python -c 'import sys; print(sys.executable)')"
+PYTHON_BIN="${PYTHON_BIN//$'\r'/}"
+[[ -x "$PYTHON_BIN" ]] || { echo "无法确定 Conda Python 路径。" >&2; exit 1; }
+
+log "安装 Python 依赖"
+"$PYTHON_BIN" -m pip install --upgrade -r requirements.txt
 
 log "创建数据目录并初始化 SQLite 数据库。"
 mkdir -p "$APP_DIR/data"
 chmod 700 "$APP_DIR/data"
 
-python3 - <<'PY'
-import importlib.util
-import os
-import sqlite3
-from datetime import datetime
-from pathlib import Path
+"$PYTHON_BIN" - "$INSTALL_SYSTEMD" "$START_SERVICE" <<'PY'
+import sys
+import main
 
-app_dir = Path.cwd()
-spec = importlib.util.spec_from_file_location('mood_app', app_dir / 'main.py')
-mood = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mood)
-mood.init_db(mood.app)
-db_path = mood.database_path(mood.app)
-
-nickname = os.environ.get('MOOD_ADMIN_NICKNAME', '').strip()
-password = os.environ.get('MOOD_ADMIN_PASSWORD', '')
-name = os.environ.get('MOOD_ADMIN_NAME', '').strip() or nickname
-
-if nickname and password:
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            'SELECT id FROM users WHERE lower(nickname) = lower(?)',
-            (nickname,),
-        ).fetchone()
-        password_hash = mood.generate_password_hash(password)
-        if row:
-            conn.execute(
-                """
-                UPDATE users
-                SET real_name = ?,
-                    password_hash = ?,
-                    is_admin = 1
-                WHERE id = ?
-                """,
-                (name, password_hash, row['id']),
-            )
-            action = 'updated'
-        else:
-            conn.execute(
-                """
-                INSERT INTO users
-                    (real_name, nickname, grade, program, is_admin, password_hash, created_at)
-                VALUES (?, ?, '', '', 1, ?, ?)
-                """,
-                (
-                    name,
-                    nickname,
-                    password_hash,
-                    datetime.now().isoformat(timespec='seconds'),
-                ),
-            )
-            action = 'created'
-        conn.commit()
-    print(f'admin {action}: {nickname}')
-elif nickname or password:
-    raise SystemExit('MOOD_ADMIN_NICKNAME 和 MOOD_ADMIN_PASSWORD 需要同时设置。')
-else:
-    print('admin skipped: 可在网页里注册第一个账号。')
-
-print(f'database ready: {db_path}')
+main.init_db(main.app)
+print(f'database ready: {main.database_path(main.app)}')
+print('admin bootstrap skipped: TechX roles are preserved locally after OIDC mapping')
+if sys.argv[1:] == ['1', '1']:
+    secret = main.app.state.config['OIDC_CLIENT_SECRET']
+    if not secret or secret.startswith('replace-'):
+        raise SystemExit('请先在 .env 中填写真实的 ACCOUNTS_CLIENT_SECRET，再启动服务。')
 PY
 
 if [[ "$INSTALL_SYSTEMD" == "1" ]]; then
@@ -165,7 +134,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/env python3 $APP_DIR/main.py
+ExecStart=$PYTHON_BIN $APP_DIR/main.py
 Restart=always
 RestartSec=3
 
@@ -190,5 +159,5 @@ else
   log "已按 --no-systemd 要求跳过 systemd 服务创建。"
 fi
 
-log "部署完成。访问地址通常是: http://服务器IP:${PORT}"
-log "如启用防火墙且直接暴露应用端口，请放行: sudo ufw allow ${PORT}/tcp"
+log "部署完成。本机监听地址通常是: http://127.0.0.1:${PORT}"
+log "请通过 Caddy 暴露 HTTPS，不要直接向公网开放应用端口。"

@@ -1,276 +1,182 @@
 # TechX Shude Mood Barometer
 
-一个面向学生每日情绪记录的心情晴雨表 Web 应用。项目使用 FastAPI、Jinja2 和 SQLite 存储，不需要 Node.js 构建流程。
+一个使用 FastAPI、Jinja2 和 SQLite 的学生心情记录应用。认证由独立部署的
+NetHub Accounts 提供，TechX 只保存本网站成员、角色和业务资料，不需要 Node.js
+构建流程。
+
+## 账号模型
+
+- 使用 OIDC Authorization Code + PKCE S256 接入 NetHub Accounts。
+- 本地 `users` 表继续保存实名、昵称、年级、项目、管理员状态和隐私同意时间。
+- `auth_sub` 唯一关联中央账号；中央管理员不会自动成为 TechX 管理员。
+- 中央用户首次访问 TechX 时创建普通本地成员，并单独完成 TechX 隐私同意。
+- 用户名和显示名称只在首次建档时复制，之后 TechX 资料独立维护。
+- 本地注册、密码登录和修改密码入口在生产环境中关闭。
+- 本地会话是数据库中的不透明随机令牌；Cookie 不保存用户资料或权限。
+- TechX 退出只结束本站会话；从 Accounts 选择“退出所有网站”时，Accounts 通过
+  签名的 Back-Channel Logout 撤销本站会话。
+- Accounts 暂时不可用时，已经存在且未过期的 TechX 会话仍然有效；新登录会显示
+  明确的服务不可用页面。
 
 ## 功能
 
-- 账号注册、登录、退出登录。
-- 个人资料维护：姓名、昵称、年级、项目和密码。
-- 每日心情量表：填写参考 PANAS-C-SF 的 10 项记录，分别查看正性、负性原始分与辅助性的情感平衡分。
-- 心情日历：按月查看每天最后一次提交，并显示当天正负情感的相对方向。
-- 心情趋势：独立查看最近一周和最近 30 天的情感平衡、正性与负性换算分折线图。
-- 旧版记录存档：旧格式的 emoji 与文字记录会自动归档，可在日历和历史记录中查看，但不会进入 PANAS 趋势统计。
-- 心情历史：查看自己的全部心情记录。
-- 管理员后台：搜索用户、查看用户列表、用户详情和心情记录，并可将普通用户设为管理员。
-- 演示数据脚本：批量生成普通用户和心情记录。
+- 每日 PANAS-C-SF 10 项心情量表、心情日历、历史和趋势图。
+- 旧格式 emoji 与文字记录归档。
+- 个人资料维护：姓名、昵称、年级和项目。
+- 管理后台：本地成员搜索、详情、记录与角色管理。
 
-## 技术栈
+网站用户列表只显示访问过 TechX 的本地成员，不会列出 Accounts 中的全部用户。
 
-- 后端：FastAPI、Uvicorn、SQLite。
-- 模板：Jinja2。
-- 密码：Werkzeug password hashing。
-- 数据库：SQLite，默认写入 `data/mood_barometer.sqlite3`。
-- 部署：可直接运行 `main.py`，也可使用 `deploy-first-run.sh` 创建 systemd 用户服务。
+## 技术栈和目录
 
-## 项目结构
+- Python 3.12、FastAPI、Authlib、Jinja2、SQLite、Uvicorn。
+- `main.py`：应用、路由和自动数据库升级。
+- `techx_auth.py`：OIDC 配置、不透明会话和退出令牌校验。
+- `scripts/apply_auth_mapping.py`：将 Accounts 迁移映射应用到 TechX 备份库。
+- `deploy-first-run.sh`：Conda 和 systemd 用户服务部署脚本。
+- `tests/`：业务及统一认证回归测试。
 
-```text
-.
-├── templates/            # Jinja2 页面模板
-├── static/               # CSS、前端脚本和图片
-├── scripts/
-│   ├── init_admin.sh     # 兼容入口，转发到 deploy-first-run.sh
-│   └── seed_demo_data.py # 生成演示用户和心情记录
-├── tests/                # 回归测试
-├── main.py               # FastAPI 应用入口、路由和 SQLite 初始化
-├── deploy-first-run.sh   # Linux 首次部署脚本
-├── requirements.txt      # Python 依赖
-├── .env.example          # 环境变量示例
-└── README.md
+## Accounts 客户端配置
+
+先在 NetHub Accounts 项目中注册机密 Web 客户端。下面的地址必须替换成 TechX 的
+真实 HTTPS 域名，回调地址必须精确匹配：
+
+```bash
+python -m app.cli register-client \
+  --client-id techx \
+  --name TechX \
+  --redirect-uri https://techx.example.com/auth/callback \
+  --launch-uri https://techx.example.com/ \
+  --backchannel-logout-uri https://techx.example.com/auth/backchannel-logout
 ```
 
-运行后会自动生成：
-
-```text
-data/
-└── mood_barometer.sqlite3
-```
+把命令输出的客户端密钥安全地写入 TechX 的 `.env`，不要提交到 Git。若 Accounts
+仓库中的 CLI 参数发生调整，以该项目的 `python -m app.cli --help` 为准。
 
 ## 本地运行
 
-确保当前 shell 的 `python3` 指向你要使用的 Python 环境，然后在项目根目录运行：
+推荐使用独立 Conda 环境：
 
 ```bash
-python3 -m pip install -r requirements.txt
+conda create -n techx-shude-mood-barometer python=3.12 pip
+conda activate techx-shude-mood-barometer
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-修改 `.env`，至少替换 `MOOD_SECRET_KEY`。示例内容：
+修改 `.env`：
 
 ```env
 MOOD_HOST=127.0.0.1
 MOOD_PORT=5000
-MOOD_SECRET_KEY=replace-with-a-random-secret-key
 MOOD_DB_PATH=data/mood_barometer.sqlite3
+MOOD_PUBLIC_BASE_URL=https://techx.example.com
+MOOD_SESSION_COOKIE_SECURE=true
+ACCOUNTS_ISSUER=https://auth.nethub.wiki
+ACCOUNTS_CLIENT_ID=techx
+ACCOUNTS_CLIENT_SECRET=replace-with-the-client-secret
 ```
 
-启动：
+`MOOD_PUBLIC_BASE_URL` 不得带路径或末尾 `/`。生产环境必须使用 HTTPS 并保持
+`MOOD_SESSION_COOKIE_SECURE=true`。启动服务：
 
 ```bash
-python3 main.py
+python main.py
 ```
 
-默认监听：
+默认监听 `127.0.0.1:5000`。数据库表和新增列会在启动时自动创建。
 
-```text
-http://127.0.0.1:5000
-```
+## 旧账号硬切换
 
-开发时如需 reload：
+不要直接对运行中的生产数据库操作。先停止 TechX，分别备份 Accounts 和 TechX
+数据库，并由 Accounts 的迁移工具生成、人工确认映射文件。映射文件格式为 Accounts
+导出的版本 1 JSON，必须覆盖 TechX 的每个本地用户。
+
+先对 TechX 数据库备份执行预检：
 
 ```bash
-FASTAPI_RELOAD=1 python3 main.py
+python scripts/apply_auth_mapping.py \
+  --database backups/mood_barometer.sqlite3 \
+  --mapping migration/identity-mapping.json \
+  --dry-run
 ```
 
-服务启动时会自动创建 SQLite 数据库和所需表结构。旧数据库可以直接随新版启动，缺失列会自动补齐。
-
-## 首次使用
-
-1. 打开 `http://127.0.0.1:5000`。
-2. 注册第一个账号。
-3. 第一个注册用户会自动成为管理员。
-4. 登录后即可提交心情、查看日历和历史记录。
-
-也可以在首次部署脚本里预创建管理员账号，见下方 Linux 部署说明。
-
-## Linux 部署
-
-建议先在项目根目录创建 `.env`：
+确认人数、缺失用户和冲突均为零后，再应用：
 
 ```bash
-cd /root/TechX-Shude-Mood-Barometer
+python scripts/apply_auth_mapping.py \
+  --database backups/mood_barometer.sqlite3 \
+  --mapping migration/identity-mapping.json
+```
+
+工具会在一个事务中写入 `auth_sub`，将旧密码哈希移入本地归档表后清空原字段，并
+清除旧会话。重复应用同一映射是安全的；映射冲突会拒绝执行。完成后用这份已迁移
+数据库替换生产库，再启动新版应用。迁移报告、映射文件、数据库备份和客户端密钥都
+不得提交到公共仓库。
+
+## Linux 简单部署
+
+项目脚本会创建或复用 Python 3.12 Conda 环境、安装依赖、初始化数据库，并默认安装
+和启动 systemd 用户服务：
+
+```bash
 cp .env.example .env
 nano .env
-```
-
-生产环境建议保持：
-
-```env
-MOOD_HOST=127.0.0.1
-MOOD_PORT=5000
-```
-
-如果已经用 Caddy 反代，`MOOD_HOST` 保持 `127.0.0.1`，不要把 Python 服务直接开放到公网。
-
-安装依赖：
-
-```bash
-python3 -m pip install -r requirements.txt
-```
-
-项目提供首次部署脚本：
-
-```bash
-chmod +x deploy-first-run.sh scripts/init_admin.sh
+chmod +x deploy-first-run.sh
 ./deploy-first-run.sh
 ```
 
-脚本会：
-
-- 检查 `python3`。
-- 创建 `data/` 目录。
-- 初始化 SQLite 数据库。
-- 默认创建并启动 systemd 用户服务 `techx-shude-mood-barometer.service`。
-- 不会创建 `.env`，也不会向 systemd service 写入 `MOOD_PORT`、`MOOD_SECRET_KEY` 等运行环境变量。
-
-只初始化数据库、不创建 systemd 服务：
+脚本可幂等重复执行，并支持：
 
 ```bash
 ./deploy-first-run.sh --no-systemd
-```
-
-创建 systemd 服务但不立即启动：
-
-```bash
 ./deploy-first-run.sh --no-start
+MOOD_CONDA_ENV=techx ./deploy-first-run.sh
 ```
 
-可选环境变量：
+查看服务：
 
 ```bash
-MOOD_ADMIN_NICKNAME=admin \
-MOOD_ADMIN_NAME=管理员 \
-MOOD_ADMIN_PASSWORD='change-this-password' \
-./deploy-first-run.sh
-```
-
-也可以把管理员初始化配置写进 `.env`：
-
-```env
-MOOD_ADMIN_NICKNAME=admin
-MOOD_ADMIN_NAME=管理员
-MOOD_ADMIN_PASSWORD=change-this-password
-```
-
-`deploy-first-run.sh` 初始化数据库时会导入 `main.py`，而 `main.py` 会读取 `.env`，所以这些管理员变量可以从 `.env` 生效。再次运行脚本时，如果昵称已存在，会把该账号更新为管理员并重设密码。
-
-如果只设置了 `MOOD_ADMIN_NICKNAME` 或只设置了 `MOOD_ADMIN_PASSWORD`，脚本会报错退出；两者需要同时设置。部署完成后建议从 `.env` 中移除明文管理员密码，别把钥匙挂门口。
-
-其他环境变量：
-
-- `MOOD_SERVICE_NAME`：systemd 用户服务名，默认 `techx-shude-mood-barometer.service`。
-- `MOOD_PORT`：只用于脚本最后输出访问地址提示；实际监听端口由 `.env`、外部环境变量或程序默认值决定。
-
-注意：`MOOD_SERVICE_NAME` 是 shell 脚本开头读取的变量，不会通过 `.env` 生效。如需自定义服务名，请在运行脚本时直接传入：
-
-```bash
-MOOD_SERVICE_NAME=mood-barometer.service ./deploy-first-run.sh
-```
-
-脚本生成的用户服务默认位置：
-
-```bash
-~/.config/systemd/user/techx-shude-mood-barometer.service
-```
-
-生成后的 service 大致如下：
-
-```ini
-[Unit]
-Description=TechX Shude Mood Barometer
-After=network.target
-
-[Service]
-WorkingDirectory=/root/TechX-Shude-Mood-Barometer
-ExecStart=/usr/bin/env python3 /root/TechX-Shude-Mood-Barometer/main.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-```
-
-修改 `.env` 或 service 后，重载并重启：
-
-```bash
-systemctl --user daemon-reload
-systemctl --user restart techx-shude-mood-barometer.service
 systemctl --user status techx-shude-mood-barometer.service
+journalctl --user -u techx-shude-mood-barometer.service -f
 ```
 
-如需退出 SSH 后服务继续运行：
+如需退出 SSH 后继续运行：
 
 ```bash
 loginctl enable-linger "$USER"
 ```
 
-本机检查：
-
-```bash
-curl http://127.0.0.1:5000/login
-```
-
-如果使用 Caddy 反代，示例配置：
+Caddy 示例：
 
 ```caddyfile
-your-domain.com {
+techx.example.com {
     reverse_proxy 127.0.0.1:5000
 }
 ```
 
-修改 Caddyfile 后：
+应用只应监听回环地址，由 Caddy 负责公网 HTTPS。
 
-```bash
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
+## 备份与恢复
 
-## 演示数据
+SQLite 默认位于 `data/mood_barometer.sqlite3`。停止服务后复制数据库文件即可得到一致
+备份；恢复时停止服务、保存当前文件、替换数据库，再启动并检查日志。不要只复制正在
+写入的 SQLite 主文件而忽略 WAL 文件。
 
-生成演示用户和心情记录：
-
-```bash
-python3 scripts/seed_demo_data.py
-```
-
-普通演示账号：
-
-```text
-demo_alice / test123456
-```
-
-脚本会创建或更新 `demo_*` 用户，并插入心情记录。数据库路径读取 `.env` 中的 `MOOD_DB_PATH`，默认在 `data/mood_barometer.sqlite3`。
-
-## 数据说明
-
-SQLite 数据库默认位置：
-
-```text
-data/mood_barometer.sqlite3
-```
-
-该目录已被 `.gitignore` 忽略，避免提交本地运行数据。生产环境建议定期备份该文件。
-
-密码不会明文保存，数据库中保存的是 Werkzeug 生成的密码哈希。生产环境必须替换 `.env` 里的 `MOOD_SECRET_KEY`，并在管理员初始化完成后移除明文 `MOOD_ADMIN_PASSWORD`。
-
-## 开发说明
-
-项目没有前端打包步骤。修改 `templates/`、`static/` 或 `main.py` 后，通常刷新浏览器或重启 `main.py` 即可查看效果。
-
-运行测试：
+## 测试
 
 ```bash
 python -m pytest -q --basetemp data/.pytest-tmp -p no:cacheprovider
+python -m compileall -q main.py techx_auth.py scripts
+bash -n deploy-first-run.sh
 ```
 
-测试不会占用默认 `5000` 端口。
+测试覆盖旧入口关闭、OIDC 回调、首次建档、角色/隐私资料保留、Accounts 故障下的
+本地会话、签名退出通知和迁移幂等性。测试不会访问真实网站。
+
+## 安全说明
+
+- 会话 Cookie 使用 `HttpOnly + SameSite=Lax`，生产环境同时使用 `Secure`。
+- OIDC 客户端密钥只保存在权限受限的 `.env` 中。
+- TechX 只接受 Accounts 使用 RS256 签名、受众为本客户端且未重放的退出令牌。
+- 本地角色仍由 TechX 管理；不要根据中央账号名称或首次访问顺序授予管理员。

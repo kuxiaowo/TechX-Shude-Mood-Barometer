@@ -6,6 +6,7 @@ __pycache__/
 # Test and coverage output
 .pytest_cache/
 .pytest-tmp/
+data/.pytest-*/
 .coverage
 .coverage.*
 htmlcov/
@@ -28,6 +29,12 @@ ENV/
 *.db-journal
 *.sqlite-journal
 *.sqlite3-journal
+
+# Migration plans, reports and exported identity mappings
+migration/
+backups/
+*migration-report*.json
+*identity-mapping*.json
 
 # Logs and runtime files
 *.log
