@@ -40,6 +40,8 @@
         <a
           class="primary-button nethub-auth-button"
           href="{{ url_for('auth_login', next=request.query_params.get('next')) }}"
+          target="_blank"
+          rel="noopener noreferrer"
         >登录或注册 NetHub 账号后继续</a>
       </div>
       {% endif %}

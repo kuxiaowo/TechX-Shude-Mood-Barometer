@@ -43,7 +43,7 @@
     {% if current_user["auth_sub"] %}
       <span>统一账号</span>
       <strong>{{ current_user["auth_sub"][:8] }}…</strong>
-      <a class="outline-button info-action" href="{{ accounts_account_url }}">管理统一账号</a>
+      <a class="outline-button info-action" href="{{ accounts_account_url }}" target="_blank" rel="noopener noreferrer">管理统一账号</a>
     {% elif legacy_auth_enabled %}
       <span>密码</span>
       <strong>测试兼容模式</strong>
