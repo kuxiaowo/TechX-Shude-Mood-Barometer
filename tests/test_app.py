@@ -116,6 +116,7 @@ def test_register_success_and_password_hash(app, client):
     assert "你好，张三" in response.text
     assert "2024" in response.text
     assert "AP" in response.text
+    assert "前往账户中心" in response.text
 
     users = rows(
         app,
@@ -591,6 +592,7 @@ def test_configured_admin_user_can_view_admin_dashboard(app, client):
     assert "用户管理" in dashboard.text
     assert "管理控制台" in dashboard.text
     assert "返回用户端" in dashboard.text
+    assert "前往账户中心" in dashboard.text
     assert "搜索用户" in dashboard.text
     assert "admin-user-row" in dashboard.text
     assert "admin-user" in dashboard.text
