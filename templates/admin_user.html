@@ -17,6 +17,7 @@
 
 <section class="admin-user-card">
   <header class="admin-user-header">
+    <span class="admin-detail-avatar central-avatar">{{ target_user["real_name"][:1] }}{% if accounts_avatar_url(target_user) %}<img src="{{ accounts_avatar_url(target_user) }}" alt="" onerror="this.remove()">{% endif %}</span>
     <div>
       <h2>@{{ target_user["nickname"] }}</h2>
       <p>{{ target_user["created_at"] | datetime_cn }} 注册</p>

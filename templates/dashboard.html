@@ -38,7 +38,10 @@
     </form>
 
     <div class="sidebar-user">
-      <div class="avatar">{{ current_user["real_name"][:1] }}</div>
+      <div class="avatar central-avatar">
+        {{ current_user["real_name"][:1] }}
+        {% if accounts_avatar_url(current_user) %}<img src="{{ accounts_avatar_url(current_user) }}" alt="" onerror="this.remove()">{% endif %}
+      </div>
       <div>
         <strong>{{ current_user["real_name"] }}</strong>
         <span>@{{ current_user["nickname"] }}</span>

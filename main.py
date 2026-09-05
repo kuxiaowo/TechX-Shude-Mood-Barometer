@@ -889,6 +889,15 @@ def render_template(
     context: dict[str, Any] | None = None,
     status_code: int = 200,
 ):
+    issuer = request.app.state.config["OIDC_ISSUER"].rstrip("/")
+
+    def accounts_avatar_url(user: sqlite3.Row | dict[str, Any]) -> str:
+        try:
+            subject = str(user["auth_sub"] or "").strip()
+        except (KeyError, TypeError, IndexError):
+            subject = ""
+        return f"{issuer}/avatars/{subject}" if subject else ""
+
     return templates.TemplateResponse(
         request=request,
         name=template_name,
@@ -900,8 +909,9 @@ def render_template(
             "programs": PROGRAMS,
             "current_user": get_current_user(request),
             "auth_background_url": get_auth_background_url(),
-            "accounts_account_url": f"{request.app.state.config['OIDC_ISSUER']}/account",
-            "accounts_logout_url": f"{request.app.state.config['OIDC_ISSUER']}/oauth/logout",
+            "accounts_account_url": f"{issuer}/account",
+            "accounts_logout_url": f"{issuer}/oauth/logout",
+            "accounts_avatar_url": accounts_avatar_url,
             "legacy_auth_enabled": request.app.state.config["LEGACY_AUTH_ENABLED"],
             **(context or {}),
         },
@@ -963,6 +973,10 @@ def find_or_create_oidc_user(
     display_name = str(userinfo.get("name", "")).strip() or preferred
     if not auth_sub or not preferred:
         raise ValueError("OIDC userinfo is missing sub or preferred_username")
+    picture = str(userinfo.get("picture") or "").strip()
+    expected_picture = f"{request.app.state.config['OIDC_ISSUER']}/avatars/{auth_sub}"
+    if picture and picture != expected_picture:
+        raise ValueError("OIDC userinfo contains an untrusted picture URL")
     db = get_db(request)
     user = db.execute("SELECT * FROM users WHERE auth_sub = ?", (auth_sub,)).fetchone()
     if user:
@@ -2566,6 +2580,7 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
         users.is_admin,
         users.is_active,
         users.created_at,
+        users.auth_sub,
         (
             SELECT COUNT(*) FROM mood_entries
             WHERE mood_entries.user_id = users.id
@@ -2620,6 +2635,7 @@ def get_admin_user_detail(
             users.is_admin,
             users.is_active,
             users.created_at,
+            users.auth_sub,
             (
                 SELECT COUNT(*) FROM mood_entries
                 WHERE mood_entries.user_id = users.id

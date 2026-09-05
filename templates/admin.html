@@ -60,6 +60,7 @@
               >
             </label>
             <a class="admin-user-link" href="{{ url_for('admin_user_detail', user_id=user['id']) }}">
+              <span class="admin-list-avatar central-avatar">{{ user["real_name"][:1] }}{% if accounts_avatar_url(user) %}<img src="{{ accounts_avatar_url(user) }}" alt="" onerror="this.remove()">{% endif %}</span>
               <div class="admin-user-identity">
                 <div class="admin-user-name-line">
                   <strong>{{ user["real_name"] }}</strong>
