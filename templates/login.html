@@ -14,11 +14,13 @@
     <div class="auth-panel">
       <a class="brand" href="{{ url_for('login') }}"><span class="brand-tech">Tech</span><span class="brand-x">X</span>心情晴雨表</a>
       <div class="auth-heading">
-        <h1>登录账户</h1>
+        <p class="eyebrow">NETHUB ACCOUNT</p>
+        <h1>{% if legacy_auth_enabled %}登录账户{% else %}注册或登录{% endif %}</h1>
       </div>
 
       {% include "_flash.html" %}
 
+      {% if legacy_auth_enabled %}
       <form class="form-stack" method="post" action="{{ url_for('login', next=request.query_params.get('next')) }}">
         <label>
           <span>昵称</span>
@@ -32,6 +34,15 @@
       </form>
 
       <p class="auth-switch">还没有账户吗？<a href="{{ url_for('register') }}">注册账户</a></p>
+      {% else %}
+      <div class="nethub-auth-action">
+        <p>本网站使用 NetHub 账号登录，请前往账号管理界面</p>
+        <a
+          class="primary-button nethub-auth-button"
+          href="{{ url_for('auth_login', next=request.query_params.get('next')) }}"
+        >登录或注册 NetHub 账号后继续</a>
+      </div>
+      {% endif %}
     </div>
   </section>
 

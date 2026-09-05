@@ -73,8 +73,12 @@ def install_fake_oidc(monkeypatch, app, userinfo):
 
 
 def test_local_password_and_registration_endpoints_are_closed(oidc_client):
-    assert oidc_client.get("/login").headers["location"].startswith("/auth/login")
-    assert oidc_client.get("/register").headers["location"].startswith("/auth/login")
+    login_page = oidc_client.get("/login")
+    assert login_page.status_code == 200
+    assert "登录或注册 NetHub 账号后继续" in login_page.text
+    assert oidc_client.get("/register", follow_redirects=False).headers["location"].startswith(
+        "/login"
+    )
     assert oidc_client.post("/login").status_code == 410
     assert oidc_client.post("/register").status_code == 410
     assert oidc_client.post("/profile/password").status_code == 410

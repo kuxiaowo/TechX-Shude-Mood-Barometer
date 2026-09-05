@@ -338,6 +338,25 @@ textarea:focus {
   text-align: center;
 }
 
+.nethub-auth-action {
+  display: grid;
+  gap: 18px;
+  margin-top: 8px;
+}
+
+.nethub-auth-action p {
+  margin: 0;
+  color: #697586;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.nethub-auth-button {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+
 .consent-notice {
   display: grid;
   gap: 8px;

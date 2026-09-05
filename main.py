@@ -1105,7 +1105,9 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/", name="index")
     async def index(request: Request):
         if get_current_user(request) is None:
-            return redirect_to(request, "auth_login")
+            if request.session.get("sso_checked"):
+                return redirect_to(request, "login")
+            return redirect_to(request, "auth_login", prompt="none")
         return redirect_to(request, "profile")
 
     @app.get("/auth/login", name="auth_login")
@@ -1114,6 +1116,12 @@ def register_routes(app: FastAPI) -> None:
         if get_current_user(request) is not None:
             return RedirectResponse(next_url, status_code=302)
         config = request.app.state.config
+        prompt = "none" if request.query_params.get("prompt") == "none" else None
+        screen_hint = (
+            "signup" if request.query_params.get("screen_hint") == "signup" else None
+        )
+        if prompt is None:
+            request.session.pop("sso_checked", None)
         if not config["OIDC_CLIENT_SECRET"]:
             return render_template(
                 request,
@@ -1122,11 +1130,16 @@ def register_routes(app: FastAPI) -> None:
                 status_code=503,
             )
         request.session["oidc_next"] = next_url
+        request.session["oidc_silent"] = prompt == "none"
         redirect_uri = f"{config['PUBLIC_BASE_URL']}/auth/callback"
         try:
+            extra = {}
+            if prompt:
+                extra["prompt"] = prompt
+            if screen_hint:
+                extra["screen_hint"] = screen_hint
             return await request.app.state.oauth.nethub.authorize_redirect(
-                request,
-                redirect_uri,
+                request, redirect_uri, **extra
             )
         except (OAuthError, httpx.HTTPError, RuntimeError) as exc:
             LOGGER.error("OIDC authorization failed: %s", exc)
@@ -1140,6 +1153,12 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/auth/callback", name="auth_callback")
     async def auth_callback(request: Request):
         next_url = safe_next_url(request.session.get("oidc_next"))
+        if request.query_params.get("error") == "login_required" and request.session.get(
+            "oidc_silent"
+        ):
+            request.session.clear()
+            request.session["sso_checked"] = True
+            return redirect_to(request, "login", next=next_url)
         try:
             token = await request.app.state.oauth.nethub.authorize_access_token(request)
             userinfo = dict(token.get("userinfo") or {})
@@ -1261,7 +1280,7 @@ def register_routes(app: FastAPI) -> None:
                 return JSONResponse(
                     {"error": "local_registration_disabled"}, status_code=410
                 )
-            return redirect_to(request, "auth_login")
+            return redirect_to(request, "login", next=request.query_params.get("next"))
 
         if get_current_user(request) is not None:
             return redirect_to(request, "profile")
@@ -1442,9 +1461,7 @@ def register_routes(app: FastAPI) -> None:
                 return JSONResponse(
                     {"error": "local_password_login_disabled"}, status_code=410
                 )
-            return redirect_to(
-                request, "auth_login", next=request.query_params.get("next")
-            )
+            return render_template(request, "login.html")
 
         if get_current_user(request) is not None:
             return redirect_to(request, "profile")
@@ -1518,6 +1535,7 @@ def register_routes(app: FastAPI) -> None:
             user_nickname=user["nickname"] if user is not None else "",
         )
         request.session.clear()
+        request.session["sso_checked"] = True
         return redirect_to(request, "auth_logged_out")
 
     @app.post("/privacy-consent", name="accept_privacy_consent")
