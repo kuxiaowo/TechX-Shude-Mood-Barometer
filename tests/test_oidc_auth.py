@@ -113,6 +113,15 @@ def test_service_origins_and_next_redirect_are_restricted(tmp_path):
     )
 
 
+def test_protected_page_preserves_query_string_when_opening_login(oidc_client):
+    response = oidc_client.get("/mood-history?month=2026-09")
+
+    assert response.status_code == 302
+    assert response.headers["location"].endswith(
+        "/login?next=%2Fmood-history%3Fmonth%3D2026-09"
+    )
+
+
 def test_oidc_callback_creates_non_admin_member_with_separate_privacy_consent(
     monkeypatch,
     oidc_app,
@@ -148,6 +157,12 @@ def test_oidc_callback_creates_non_admin_member_with_separate_privacy_consent(
     callback = oidc_client.get("/auth/callback?code=code&state=test-state")
     assert callback.status_code == 302
     assert callback.headers["location"] == "/mood-history"
+
+    login_page = oidc_client.get(
+        "/login?next=/mood-history%3Fmonth%3D2026-09"
+    )
+    assert login_page.status_code == 302
+    assert login_page.headers["location"] == "/mood-history?month=2026-09"
     user = db_rows(oidc_app, "SELECT * FROM users")[0]
     assert user["auth_sub"] == sub
     assert user["nickname"] == "central-user"
