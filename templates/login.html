@@ -39,9 +39,7 @@
         <p>本网站使用 NetHub 账号登录，请前往账号管理界面</p>
         <a
           class="primary-button nethub-auth-button"
-          href="{{ url_for('auth_login', next=request.query_params.get('next'), popup=1) }}"
-          target="_blank"
-          rel="noopener noreferrer"
+          href="{{ url_for('auth_login', next=request.query_params.get('next')) }}"
         >登录或注册 NetHub 账号后继续</a>
       </div>
       {% endif %}
