@@ -9,7 +9,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 import uvicorn
@@ -950,6 +950,17 @@ def safe_next_url(value: str | None, default: str = "/profile") -> str:
     return value
 
 
+def auth_popup_next_url(value: str | None) -> str:
+    parts = urlsplit(safe_next_url(value))
+    query = [
+        item
+        for item in parse_qsl(parts.query, keep_blank_values=True)
+        if item[0] != "auth_popup"
+    ]
+    query.append(("auth_popup", "1"))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
 def unique_local_nickname(db: sqlite3.Connection, preferred: str, auth_sub: str) -> str:
     base = preferred.strip()[:32] or f"user-{auth_sub[:8]}"
     if db.execute("SELECT 1 FROM users WHERE nickname = ?", (base,)).fetchone() is None:
@@ -1127,6 +1138,8 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/auth/login", name="auth_login")
     async def auth_login(request: Request):
         next_url = safe_next_url(request.query_params.get("next"))
+        if request.query_params.get("popup") == "1":
+            next_url = auth_popup_next_url(next_url)
         if get_current_user(request) is not None:
             return RedirectResponse(next_url, status_code=302)
         config = request.app.state.config

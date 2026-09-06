@@ -1,4 +1,58 @@
+const AUTH_POPUP_QUERY_KEY = "auth_popup";
+const AUTH_POPUP_CHANNEL_NAME = "nethub-auth:techx-mood";
+const AUTH_POPUP_STORAGE_KEY = "techx-auth-popup-complete";
+let authPopupChannel = null;
+let authPopupReloadScheduled = false;
+
+function setupAuthPopupSync() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get(AUTH_POPUP_QUERY_KEY) === "1") {
+    url.searchParams.delete(AUTH_POPUP_QUERY_KEY);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    const completedAt = String(Date.now());
+    try {
+      window.localStorage.setItem(AUTH_POPUP_STORAGE_KEY, completedAt);
+    } catch (_error) {
+      // Storage can be unavailable in strict privacy modes.
+    }
+    if ("BroadcastChannel" in window) {
+      try {
+        const channel = new BroadcastChannel(AUTH_POPUP_CHANNEL_NAME);
+        channel.postMessage({ type: "login-complete", completedAt });
+        channel.close();
+      } catch (_error) {
+        // The storage event above is the compatibility fallback.
+      }
+    }
+    window.setTimeout(() => window.close(), 50);
+    return true;
+  }
+
+  const reloadAfterLogin = () => {
+    if (authPopupReloadScheduled) return;
+    authPopupReloadScheduled = true;
+    window.location.reload();
+  };
+  if ("BroadcastChannel" in window) {
+    try {
+      authPopupChannel = new BroadcastChannel(AUTH_POPUP_CHANNEL_NAME);
+      authPopupChannel.addEventListener("message", (event) => {
+        if (event.data?.type === "login-complete") reloadAfterLogin();
+      });
+    } catch (_error) {
+      authPopupChannel = null;
+    }
+  }
+  window.addEventListener("storage", (event) => {
+    if (event.key === AUTH_POPUP_STORAGE_KEY && event.newValue) reloadAfterLogin();
+  });
+  return false;
+}
+
+const authPopupCompletion = setupAuthPopupSync();
+
 document.addEventListener("DOMContentLoaded", () => {
+  if (authPopupCompletion) return;
   const panasForm = document.querySelector("[data-panas-form]");
   if (panasForm) {
     const positiveKeys = ["cheerful", "lively", "happy", "joyful", "proud"];
