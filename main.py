@@ -616,7 +616,7 @@ def get_current_user(request: Request) -> sqlite3.Row | None:
 def require_user(request: Request) -> sqlite3.Row | RedirectResponse:
     user = get_current_user(request)
     if user is None:
-        return redirect_to(request, "login", next=request.url.path)
+        return redirect_to(request, "login", next=request_return_url(request))
     return user
 
 
@@ -950,6 +950,13 @@ def safe_next_url(value: str | None, default: str = "/profile") -> str:
     return value
 
 
+def request_return_url(request: Request) -> str:
+    value = request.url.path
+    if request.url.query:
+        value += f"?{request.url.query}"
+    return safe_next_url(value)
+
+
 def unique_local_nickname(db: sqlite3.Connection, preferred: str, auth_sub: str) -> str:
     base = preferred.strip()[:32] or f"user-{auth_sub[:8]}"
     if db.execute("SELECT 1 FROM users WHERE nickname = ?", (base,)).fetchone() is None:
@@ -1140,7 +1147,10 @@ def register_routes(app: FastAPI) -> None:
             return render_template(
                 request,
                 "auth_error.html",
-                {"auth_error": "TechX 尚未配置统一账号客户端密钥。"},
+                {
+                    "auth_error": "TechX 尚未配置统一账号客户端密钥。",
+                    "next_url": next_url,
+                },
                 status_code=503,
             )
         request.session["oidc_next"] = next_url
@@ -1160,7 +1170,10 @@ def register_routes(app: FastAPI) -> None:
             return render_template(
                 request,
                 "auth_error.html",
-                {"auth_error": "统一账号服务暂时不可用，请稍后重试。"},
+                {
+                    "auth_error": "统一账号服务暂时不可用，请稍后重试。",
+                    "next_url": next_url,
+                },
                 status_code=502,
             )
 
@@ -1185,7 +1198,10 @@ def register_routes(app: FastAPI) -> None:
                 return render_template(
                     request,
                     "auth_error.html",
-                    {"auth_error": "此 TechX 本地成员已被停用，请联系网站管理员。"},
+                    {
+                        "auth_error": "此 TechX 本地成员已被停用，请联系网站管理员。",
+                        "next_url": next_url,
+                    },
                     status_code=403,
                 )
         except (
@@ -1201,7 +1217,10 @@ def register_routes(app: FastAPI) -> None:
             return render_template(
                 request,
                 "auth_error.html",
-                {"auth_error": "统一登录验证失败，请返回后重新登录。"},
+                {
+                    "auth_error": "统一登录验证失败，请返回后重新登录。",
+                    "next_url": next_url,
+                },
                 status_code=400,
             )
 
@@ -1470,15 +1489,16 @@ def register_routes(app: FastAPI) -> None:
 
     @app.api_route("/login", methods=["GET", "POST"], name="login")
     async def login(request: Request):
+        if get_current_user(request) is not None:
+            return RedirectResponse(
+                safe_next_url(request.query_params.get("next")), status_code=302
+            )
         if not request.app.state.config["LEGACY_AUTH_ENABLED"]:
             if request.method == "POST":
                 return JSONResponse(
                     {"error": "local_password_login_disabled"}, status_code=410
                 )
             return render_template(request, "login.html")
-
-        if get_current_user(request) is not None:
-            return redirect_to(request, "profile")
 
         if request.method == "POST":
             form = await request.form()
