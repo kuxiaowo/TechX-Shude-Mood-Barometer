@@ -11,7 +11,7 @@
       <a class="brand" href="{{ url_for('index') }}"><span class="brand-tech">Tech</span><span class="brand-x">X</span>心情晴雨表</a>
       <div class="auth-heading"><p class="eyebrow">NetHub Accounts</p><h1>登录暂未完成</h1></div>
       <p>{{ auth_error }}</p>
-      <a class="primary-button" href="{{ url_for('auth_login', popup=1) }}" target="_blank" rel="noopener noreferrer">重新登录</a>
+      <a class="primary-button" href="{{ url_for('auth_login') }}">重新登录</a>
     </div>
   </section>
 </main>

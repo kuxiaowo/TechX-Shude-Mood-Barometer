@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from joserfc import jwt
 from joserfc.jwk import import_key
 
-from main import auth_popup_next_url, create_app, safe_next_url
+from main import create_app, safe_next_url
 from scripts.apply_auth_mapping import apply_mapping
 from techx_auth import (
     BACKCHANNEL_LOGOUT_EVENT,
@@ -76,8 +76,7 @@ def test_local_password_and_registration_endpoints_are_closed(oidc_client):
     login_page = oidc_client.get("/login")
     assert login_page.status_code == 200
     assert "登录或注册 NetHub 账号后继续" in login_page.text
-    assert 'target="_blank"' in login_page.text
-    assert 'rel="noopener noreferrer"' in login_page.text
+    assert 'target="_blank"' not in login_page.text
     assert oidc_client.get("/register", follow_redirects=False).headers["location"].startswith(
         "/login"
     )
@@ -112,9 +111,6 @@ def test_service_origins_and_next_redirect_are_restricted(tmp_path):
     assert safe_next_url("/mood-history?month=2026-01") == (
         "/mood-history?month=2026-01"
     )
-    assert auth_popup_next_url("/mood-history?month=2026-01#chart") == (
-        "/mood-history?month=2026-01&auth_popup=1#chart"
-    )
 
 
 def test_oidc_callback_creates_non_admin_member_with_separate_privacy_consent(
@@ -133,7 +129,7 @@ def test_oidc_callback_creates_non_admin_member_with_separate_privacy_consent(
             "sid": "central-session-id",
         },
     )
-    started = oidc_client.get("/auth/login?next=/mood-history&popup=1")
+    started = oidc_client.get("/auth/login?next=/mood-history")
     assert started.status_code == 302
     assert started.headers["location"].startswith(
         "https://accounts.test/oauth/authorize"
@@ -151,7 +147,7 @@ def test_oidc_callback_creates_non_admin_member_with_separate_privacy_consent(
 
     callback = oidc_client.get("/auth/callback?code=code&state=test-state")
     assert callback.status_code == 302
-    assert callback.headers["location"] == "/mood-history?auth_popup=1"
+    assert callback.headers["location"] == "/mood-history"
     user = db_rows(oidc_app, "SELECT * FROM users")[0]
     assert user["auth_sub"] == sub
     assert user["nickname"] == "central-user"
