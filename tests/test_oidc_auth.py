@@ -122,6 +122,15 @@ def test_protected_page_preserves_query_string_when_opening_login(oidc_client):
     )
 
 
+def test_login_required_callback_without_flow_session_returns_to_login(oidc_client):
+    response = oidc_client.get(
+        "/auth/callback?error=login_required&state=expired-state"
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"].endswith("/login?next=%2Fprofile")
+
+
 def test_oidc_callback_creates_non_admin_member_with_separate_privacy_consent(
     monkeypatch,
     oidc_app,

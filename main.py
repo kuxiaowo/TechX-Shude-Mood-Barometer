@@ -1180,9 +1180,9 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/auth/callback", name="auth_callback")
     async def auth_callback(request: Request):
         next_url = safe_next_url(request.session.get("oidc_next"))
-        if request.query_params.get("error") == "login_required" and request.session.get(
-            "oidc_silent"
-        ):
+        if request.query_params.get("error") == "login_required":
+            if get_current_user(request) is not None:
+                return RedirectResponse(next_url, status_code=302)
             request.session.clear()
             request.session["sso_checked"] = True
             return redirect_to(request, "login", next=next_url)
