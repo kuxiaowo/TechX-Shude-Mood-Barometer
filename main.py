@@ -81,6 +81,8 @@ PANAS_RESPONSE_OPTIONS = (
     {"value": 5, "label": "非常强烈"},
 )
 
+DAILY_NOTE_MAX_LENGTH = 2000
+
 MOOD_SCORE_BANDS = (
     {
         "min": 0,
@@ -320,6 +322,7 @@ def init_db(app: FastAPI) -> None:
                 positive_score INTEGER NOT NULL,
                 negative_score INTEGER NOT NULL,
                 mood_score INTEGER NOT NULL,
+                daily_note TEXT NOT NULL DEFAULT '',
                 entry_date TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users (id)
@@ -390,6 +393,7 @@ def init_db(app: FastAPI) -> None:
         )
         ensure_user_profile_columns(db)
         ensure_panas_mood_entries_schema(db)
+        ensure_mood_entry_daily_note(db)
         ensure_default_settings(db)
         prune_old_audit_rows(db)
         prune_expired_sessions(db)
@@ -444,6 +448,7 @@ def ensure_panas_mood_entries_schema(db: sqlite3.Connection) -> None:
                     int(row.get("positive_score") or 0),
                     int(row.get("negative_score") or 0),
                     int(mood_score),
+                    str(row.get("daily_note") or ""),
                     row["entry_date"],
                     row["created_at"],
                 )
@@ -475,6 +480,7 @@ def ensure_panas_mood_entries_schema(db: sqlite3.Connection) -> None:
             positive_score INTEGER NOT NULL,
             negative_score INTEGER NOT NULL,
             mood_score INTEGER NOT NULL,
+            daily_note TEXT NOT NULL DEFAULT '',
             entry_date TEXT NOT NULL,
             created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
@@ -490,10 +496,11 @@ def ensure_panas_mood_entries_schema(db: sqlite3.Connection) -> None:
             positive_score,
             negative_score,
             mood_score,
+            daily_note,
             entry_date,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         modern_values,
     )
@@ -519,6 +526,18 @@ def ensure_panas_mood_entries_schema(db: sqlite3.Connection) -> None:
             ON mood_entries (user_id, entry_date)
         """
     )
+
+
+def ensure_mood_entry_daily_note(db: sqlite3.Connection) -> None:
+    """Add the optional note after any legacy mood-table archive migration."""
+    columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(mood_entries)").fetchall()
+    }
+    if "daily_note" not in columns:
+        db.execute(
+            "ALTER TABLE mood_entries "
+            "ADD COLUMN daily_note TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def ensure_default_settings(db: sqlite3.Connection) -> None:
@@ -1834,11 +1853,39 @@ def register_routes(app: FastAPI) -> None:
 
         if request.method == "POST":
             form = await request.form()
+            daily_note = str(form.get("daily_note", "")).strip()
             responses = {
                 item["key"]: str(form.get(item["key"], "")).strip()
                 for item in PANAS_ITEMS
             }
             scores = calculate_panas_scores(responses)
+
+            if len(daily_note) > DAILY_NOTE_MAX_LENGTH:
+                record_activity(
+                    request,
+                    "operation",
+                    "mood_report_failed",
+                    status_code=400,
+                    metadata={"reason": "daily_note_too_long"},
+                    user_id=user["id"],
+                    user_nickname=user["nickname"],
+                )
+                flash(
+                    request,
+                    f"经历记录不能超过 {DAILY_NOTE_MAX_LENGTH} 个字符。",
+                    "error",
+                )
+                return render_template(
+                    request,
+                    "mood_report.html",
+                    {
+                        "active_page": "mood_report",
+                        "recent_entries": get_recent_entries(request, user["id"]),
+                        "submitted_responses": responses,
+                        "submitted_daily_note": daily_note,
+                    },
+                    status_code=400,
+                )
 
             if scores is None:
                 record_activity(
@@ -1858,6 +1905,7 @@ def register_routes(app: FastAPI) -> None:
                         "active_page": "mood_report",
                         "recent_entries": get_recent_entries(request, user["id"]),
                         "submitted_responses": responses,
+                        "submitted_daily_note": daily_note,
                     },
                     status_code=400,
                 )
@@ -1872,10 +1920,11 @@ def register_routes(app: FastAPI) -> None:
                         positive_score,
                         negative_score,
                         mood_score,
+                        daily_note,
                         entry_date,
                         created_at
                     )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["id"],
@@ -1883,6 +1932,7 @@ def register_routes(app: FastAPI) -> None:
                     scores["positive_score"],
                     scores["negative_score"],
                     scores["mood_score"],
+                    daily_note,
                     date.today().isoformat(),
                     now.isoformat(timespec="seconds"),
                 ),
@@ -2459,6 +2509,7 @@ def get_recent_entries(
             positive_score,
             negative_score,
             mood_score,
+            daily_note,
             entry_date,
             created_at
         FROM mood_entries
@@ -2483,6 +2534,7 @@ def get_user_entries(request: Request, user_id: int) -> list[sqlite3.Row]:
             positive_score,
             negative_score,
             mood_score,
+            daily_note,
             entry_date,
             created_at
         FROM mood_entries
@@ -2690,6 +2742,7 @@ def get_admin_user_detail(
             positive_score,
             negative_score,
             mood_score,
+            daily_note,
             entry_date,
             created_at
         FROM mood_entries

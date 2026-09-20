@@ -49,6 +49,20 @@
           </li>
         {% endfor %}
       </ol>
+
+      <div class="daily-note-field">
+        <label for="daily-note">今天发生了什么（选填）</label>
+        <p id="daily-note-help">可以记录今天的经历或想法，不填写也能提交。内容可由你和本站授权管理员查看。</p>
+        <textarea
+          id="daily-note"
+          name="daily_note"
+          maxlength="2000"
+          rows="6"
+          aria-describedby="daily-note-help daily-note-limit"
+          placeholder="写下今天想记住的事情……"
+        >{{ submitted_daily_note | default('') }}</textarea>
+        <small id="daily-note-limit">最多 2,000 个字符</small>
+      </div>
     </fieldset>
 
     <aside class="panas-score-panel" aria-live="polite">
