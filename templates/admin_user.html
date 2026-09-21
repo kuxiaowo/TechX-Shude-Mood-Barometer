@@ -119,6 +119,12 @@
           <div><dt>负性情感</dt><dd>{{ scores.negative_raw }} / 25</dd></div>
           <div><dt>情感平衡</dt><dd>{{ scores.balance_label }}</dd></div>
         </dl>
+        {% if entry["daily_note"] %}
+          <section class="daily-note-record" aria-label="当天经历记录">
+            <h3>今天发生了什么</h3>
+            <p>{{ entry["daily_note"] }}</p>
+          </section>
+        {% endif %}
         {% set response_details = entry["panas_responses"] | panas_response_details %}
         <div class="panas-record-details" aria-label="10 项量表明细">
           {% for dimension, dimension_label in [("positive", "正性情感 5 项"), ("negative", "负性情感 5 项")] %}

@@ -1347,6 +1347,137 @@ def test_mood_report_requires_all_ten_valid_panas_answers(client):
     assert "请完成全部 10 项" in invalid_answer.text
 
 
+def test_mood_report_saves_optional_daily_note_and_keeps_separate_submissions(
+    app, client
+):
+    register(client)
+
+    first = panas_data(positive=5, negative=1)
+    first["daily_note"] = "  今天完成了展示\n也和朋友聊了聊。  "
+    second = panas_data(positive=2, negative=4)
+    second["daily_note"] = "第二次记录"
+
+    assert client.post("/mood-report", data=first).status_code == 302
+    assert client.post("/mood-report", data=second).status_code == 302
+
+    stored = rows(
+        app,
+        "SELECT daily_note FROM mood_entries ORDER BY id",
+    )
+    assert [row["daily_note"] for row in stored] == [
+        "今天完成了展示\n也和朋友聊了聊。",
+        "第二次记录",
+    ]
+    history = client.get("/mood-history")
+    assert "今天完成了展示\n也和朋友聊了聊。" in history.text
+    assert "第二次记录" in history.text
+
+
+def test_mood_report_accepts_empty_and_2000_character_daily_notes(app, client):
+    register(client)
+
+    empty = panas_data()
+    empty["daily_note"] = "   "
+    boundary = panas_data()
+    boundary["daily_note"] = "记" * 2000
+
+    assert client.post("/mood-report", data=empty).status_code == 302
+    assert client.post("/mood-report", data=boundary).status_code == 302
+
+    stored = rows(app, "SELECT daily_note FROM mood_entries ORDER BY id")
+    assert stored[0]["daily_note"] == ""
+    assert stored[1]["daily_note"] == "记" * 2000
+
+
+def test_daily_note_validation_preserves_note_and_panas_choices(app, client):
+    register(client)
+    too_long = "长" * 2001
+    data = panas_data(positive=4, negative=2)
+    data["daily_note"] = too_long
+
+    response = client.post("/mood-report", data=data)
+
+    assert response.status_code == 400
+    assert "经历记录不能超过 2000 个字符" in response.text
+    assert too_long in response.text
+    assert 'name="cheerful"' in response.text
+    assert 'value="4"\n                    checked' in response.text
+    assert not rows(app, "SELECT id FROM mood_entries")
+
+    incomplete = panas_data()
+    incomplete.pop("cheerful")
+    incomplete["daily_note"] = "量表漏填时也保留"
+    response = client.post("/mood-report", data=incomplete)
+    assert response.status_code == 400
+    assert "量表漏填时也保留" in response.text
+
+
+def test_daily_note_is_escaped_private_to_owner_and_visible_to_admin(app, client):
+    register(client, nickname="student", real_name="学生")
+    note = '<script>alert("x")</script>\n只给本人和管理员看'
+    data = panas_data()
+    data["daily_note"] = note
+    client.post("/mood-report", data=data)
+    student_id = rows(app, "SELECT id FROM users WHERE nickname = 'student'")[0]["id"]
+
+    owner_history = client.get("/mood-history")
+    assert "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;" in owner_history.text
+    assert '<script>alert("x")</script>' not in owner_history.text
+
+    client.post("/logout")
+    register(client, nickname="other", real_name="其他用户")
+    assert "只给本人和管理员看" not in client.get("/mood-history").text
+    client.post("/logout")
+
+    register(client, nickname="admin-user", real_name="管理员")
+    detail = client.get(f"/admin/users/{student_id}")
+    assert detail.status_code == 200
+    assert "只给本人和管理员看" in detail.text
+    assert "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;" in detail.text
+
+    logs = rows(app, "SELECT metadata FROM activity_logs")
+    assert all("只给本人和管理员看" not in row["metadata"] for row in logs)
+
+
+def test_existing_panas_schema_gets_idempotent_daily_note_migration(tmp_path):
+    db_path = tmp_path / "modern-without-note.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """
+            CREATE TABLE mood_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                panas_responses TEXT NOT NULL DEFAULT '{}',
+                positive_score INTEGER NOT NULL,
+                negative_score INTEGER NOT NULL,
+                mood_score INTEGER NOT NULL,
+                entry_date TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO mood_entries (
+                user_id, panas_responses, positive_score, negative_score,
+                mood_score, entry_date, created_at
+            ) VALUES (1, '{}', 50, 50, 50, '2026-09-20', '2026-09-20T08:00:00')
+            """
+        )
+        db.commit()
+
+    config = {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test"}
+    migrated_app = create_app(config)
+    recreated_app = create_app(config)
+
+    columns = {
+        row["name"] for row in rows(recreated_app, "PRAGMA table_info(mood_entries)")
+    }
+    assert "daily_note" in columns
+    stored = rows(migrated_app, "SELECT id, daily_note FROM mood_entries")
+    assert [(row["id"], row["daily_note"]) for row in stored] == [(1, "")]
+
+
 def test_mood_report_uses_child_friendly_five_point_wording(client):
     register(client)
 
@@ -1501,6 +1632,10 @@ def test_legacy_mood_records_are_archived_and_only_shown_in_calendar_and_history
     assert len(archive) == 1
     assert archive[0]["source_entry_id"] == 77
     assert archive[0]["mood_emoji"] == "😡"
+    assert "daily_note" in {
+        row["name"]
+        for row in rows(migrated_app, "PRAGMA table_info(mood_entries)")
+    }
 
     calendar = migrated_client.get(f"/mood-calendar?month={today:%Y-%m}")
     grid = calendar_grid(calendar.text)

@@ -11,7 +11,7 @@
   --green: #15884f;
   --amber: #f59e0b;
   --coral: #e76650;
-  --shadow: 0 18px 45px rgba(15, 30, 45, 0.18);
+  --shadow: 0 4px 14px rgba(15, 47, 72, 0.14);
   --site-footer-height: 68px;
 }
 
@@ -26,7 +26,10 @@ body {
   margin: 0;
   color: var(--ink);
   font-family:
-    "Inter", "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  font-size: 16px;
+  font-weight: 400;
   line-height: 1.5;
 }
 
@@ -53,9 +56,8 @@ textarea {
 
 .login-page {
   background:
-    radial-gradient(circle at 12% 18%, rgba(8, 120, 189, 0.2), transparent 32%),
-    radial-gradient(circle at 88% 82%, rgba(231, 102, 80, 0.12), transparent 30%),
-    linear-gradient(135deg, #dceef8 0%, #f3f8fb 48%, #dfeaf3 100%);
+    radial-gradient(circle at 22% 72%, rgba(4, 92, 170, 0.34), transparent 34%),
+    linear-gradient(120deg, #0878bd 0%, #20a9d1 58%, #47c7db 100%);
 }
 
 .login-page .auth-wrap {
@@ -75,9 +77,10 @@ textarea {
   display: grid;
   grid-template-columns: minmax(420px, 2fr) minmax(340px, 1fr);
   overflow: hidden;
-  border-radius: 8px;
+  border: 1px solid #d6dee8;
+  border-radius: 12px;
   background: var(--paper);
-  box-shadow: 0 24px 80px rgba(16, 38, 63, 0.12);
+  box-shadow: var(--shadow);
 }
 
 .auth-visual {
@@ -197,20 +200,23 @@ p {
 
 h1 {
   margin: 0;
-  font-size: 34px;
+  font-size: 28px;
+  font-weight: 500;
   line-height: 1.15;
   letter-spacing: 0;
 }
 
 h2 {
   margin: 0 0 14px;
-  font-size: 22px;
+  font-size: 20px;
+  font-weight: 500;
   line-height: 1.25;
 }
 
 h3 {
   margin: 0 0 12px;
   font-size: 16px;
+  font-weight: 500;
 }
 
 .form-stack {
@@ -232,7 +238,7 @@ textarea {
   width: 100%;
   border: 1px solid #dbe4ef;
   border-radius: 6px;
-  background: #eef5ff;
+  background: #fff;
   color: #14191f;
   outline: none;
 }
@@ -271,7 +277,7 @@ textarea:focus {
   border-radius: 6px;
   border: 1px solid transparent;
   padding: 0 18px;
-  font-weight: 800;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -320,7 +326,7 @@ textarea:focus {
 .ghost-button {
   width: 100%;
   color: #20242a;
-  background: transparent;
+  background: #fff;
   border-color: var(--line);
 }
 
@@ -422,8 +428,8 @@ textarea:focus {
 .dashboard-page {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 20% 95%, rgba(245, 158, 11, 0.18), transparent 24%),
-    linear-gradient(135deg, #0878bd 0%, #24a8d4 55%, #48c8d8 100%);
+    radial-gradient(circle at 18% 88%, rgba(0, 82, 160, 0.28), transparent 28%),
+    linear-gradient(120deg, #0878bd 0%, #20a9d1 58%, #47c7db 100%);
 }
 
 .dashboard-shell {
@@ -441,7 +447,7 @@ textarea:focus {
 .content-card,
 .support-panel {
   background: var(--paper);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid #d6dee8;
   box-shadow: var(--shadow);
 }
 
@@ -483,13 +489,14 @@ textarea:focus {
   border-radius: 4px;
   padding: 0 16px;
   color: #20242a;
+  background: #fff;
   font-size: 15px;
   font-weight: 700;
 }
 
 .nav-item:hover,
 .nav-item.is-active {
-  background: #d9dde2;
+  background: #e5e7eb;
   text-decoration: none;
 }
 
@@ -656,7 +663,16 @@ textarea:focus {
 }
 
 .page-heading h1 {
-  font-size: 34px;
+  font-size: 28px;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #0c7bdc;
+  outline-offset: 2px;
 }
 
 .profile-grid {
@@ -829,6 +845,38 @@ textarea:focus {
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.daily-note-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+}
+
+.daily-note-field label {
+  color: #20384b;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.daily-note-field p,
+.daily-note-field small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.daily-note-field textarea {
+  min-height: 132px;
+  background: #fff;
+}
+
+.daily-note-field small {
+  justify-self: end;
 }
 
 .panas-scale-guide,
@@ -1748,6 +1796,27 @@ textarea:focus {
   font-weight: 900;
 }
 
+.daily-note-record {
+  margin-top: 10px;
+  border-left: 3px solid var(--blue-700);
+  border-radius: 0 7px 7px 0;
+  padding: 11px 13px;
+  background: #f3f8fc;
+}
+
+.daily-note-record h3 {
+  margin: 0 0 5px;
+  color: var(--blue-900);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.daily-note-record p {
+  margin: 0;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
 .panas-record-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1961,33 +2030,41 @@ textarea:focus {
 
 .admin-console-page {
   min-height: 100vh;
-  background: #edf2f7;
+  background:
+    radial-gradient(circle at 18% 88%, rgba(0, 82, 160, 0.28), transparent 28%),
+    linear-gradient(120deg, #0878bd 0%, #20a9d1 58%, #47c7db 100%);
 }
 
 .admin-console-shell {
+  width: min(1420px, calc(100% - 48px));
   min-height: 100vh;
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
+  margin: 24px auto;
+  overflow: hidden;
+  border: 1px solid #d6dee8;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--shadow);
 }
 
 .admin-console-sidebar {
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
   padding: 28px 20px 22px;
-  color: #dceaf4;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(25, 151, 184, 0.24), transparent 34%),
-    #0b1d2c;
+  color: var(--ink);
+  background: #fff;
+  border-right: 1px solid var(--line);
 }
 
 .admin-console-brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: #fff;
+  color: var(--ink);
   text-decoration: none;
 }
 
@@ -1999,8 +2076,8 @@ textarea:focus {
   height: 42px;
   place-items: center;
   border-radius: 10px;
-  color: #06202d;
-  background: #6ee7e7;
+  color: #fff;
+  background: linear-gradient(135deg, #0878bd, #20a9d1);
   font-size: 13px;
   font-weight: 950;
   letter-spacing: -0.05em;
@@ -2014,7 +2091,7 @@ textarea:focus {
 }
 
 .admin-console-brand b { font-size: 18px; }
-.admin-console-brand small { color: #91a9bb; font-size: 11px; }
+.admin-console-brand small { color: var(--muted); font-size: 11px; }
 
 .admin-console-nav {
   display: grid;
@@ -2025,29 +2102,30 @@ textarea:focus {
 .admin-console-nav-item {
   display: grid;
   gap: 2px;
-  border-left: 3px solid transparent;
-  border-radius: 0 8px 8px 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
   padding: 12px 13px;
-  color: #d5e2eb;
+  color: var(--ink);
+  background: #fff;
 }
 
 .admin-console-nav-item:hover,
 .admin-console-nav-item.is-active {
-  border-left-color: #6ee7e7;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  border-color: #d5dae1;
+  color: var(--ink);
+  background: #e5e7eb;
   text-decoration: none;
 }
 
 .admin-console-nav-item span { font-weight: 900; }
-.admin-console-nav-item small { color: #8198aa; font-size: 10px; }
+.admin-console-nav-item small { color: var(--muted); font-size: 10px; }
 
 .admin-console-account {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: auto;
-  border-top: 1px solid rgba(255, 255, 255, 0.11);
+  border-top: 1px solid var(--line);
   padding-top: 18px;
 }
 
@@ -2057,12 +2135,12 @@ textarea:focus {
   height: 38px;
   place-items: center;
   border-radius: 50%;
-  color: #07212e;
-  background: #6ee7e7;
+  color: #fff;
+  background: var(--blue-700);
   font-weight: 900;
 }
 
-.admin-console-account small { color: #8fa6b7; font-size: 11px; }
+.admin-console-account small { color: var(--muted); font-size: 11px; }
 
 .admin-console-return,
 .admin-console-logout {
@@ -2072,10 +2150,10 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   margin-top: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--line);
   border-radius: 7px;
-  color: #dce8f0;
-  background: transparent;
+  color: var(--ink);
+  background: #fff;
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
@@ -2083,27 +2161,27 @@ textarea:focus {
 
 .admin-console-return:hover,
 .admin-console-logout:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  background: #f3f4f6;
   text-decoration: none;
 }
 
 .admin-console-account-button {
   justify-content: space-between;
-  border-color: rgba(93, 180, 255, 0.48);
-  background: rgba(9, 119, 229, 0.28);
-  color: #fff;
+  border-color: #9bc7eb;
+  background: #eef7ff;
+  color: #075b96;
   text-decoration: none;
 }
 
 .admin-console-account-button:hover {
-  border-color: rgba(128, 200, 255, 0.72);
-  background: rgba(9, 119, 229, 0.44);
+  border-color: #70b1e5;
+  background: #e2f2ff;
 }
 
 .admin-console-main {
   min-width: 0;
-  height: 100vh;
+  height: calc(100vh - 48px);
   overflow-y: auto;
   padding: 38px clamp(24px, 4vw, 64px) 50px;
 }
@@ -2118,7 +2196,8 @@ textarea:focus {
 
 .admin-console-heading h1 {
   color: #102a3c;
-  font-size: 34px;
+  font-size: 28px;
+  font-weight: 500;
 }
 
 .admin-console-heading > div > p:last-child {
@@ -2675,6 +2754,7 @@ select:disabled {
 @media (max-width: 900px) {
   .admin-console-shell {
     grid-template-columns: 1fr;
+    min-height: calc(100vh - 48px);
   }
 
   .admin-console-sidebar {
@@ -2698,6 +2778,11 @@ select:disabled {
 }
 
 @media (max-width: 620px) {
+  .admin-console-shell {
+    width: calc(100% - 24px);
+    margin: 12px auto;
+  }
+
   .admin-console-main {
     padding: 26px 14px 40px;
   }
