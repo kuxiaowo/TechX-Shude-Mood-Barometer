@@ -115,6 +115,8 @@ REGISTRATION_IP_LIMIT_MAX = 100
 REGISTRATION_WINDOW_HOURS = 24
 AUDIT_RETENTION_DAYS = 30
 TRUSTED_PROXY_HOSTS = {"127.0.0.1", "::1", "localhost"}
+ADMIN_PAGE_SIZE_DEFAULT = 50
+ADMIN_PAGE_SIZE_MAX = 100
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 LOGGER = logging.getLogger("techx")
@@ -2059,7 +2061,17 @@ def register_routes(app: FastAPI) -> None:
             return user
 
         search_query = request.query_params.get("q", "").strip()
-        users = get_admin_users(request, search_query)
+        requested_page, page_size = parse_admin_pagination(request)
+        user_count = count_admin_users(request, search_query)
+        pagination = build_pagination(
+            request, user_count, requested_page, page_size
+        )
+        users = get_admin_users(
+            request,
+            search_query,
+            limit=page_size,
+            offset=pagination["offset"],
+        )
         return render_template(
             request,
             "admin.html",
@@ -2068,6 +2080,7 @@ def register_routes(app: FastAPI) -> None:
                 "users": users,
                 "admin_stats": get_admin_stats(request),
                 "search_query": search_query,
+                "pagination": pagination,
                 "recent_entries": [],
             },
         )
@@ -2078,10 +2091,24 @@ def register_routes(app: FastAPI) -> None:
         if isinstance(user, RedirectResponse):
             return user
 
-        target_user, entries, legacy_entries = get_admin_user_detail(request, user_id)
+        requested_page, page_size = parse_admin_pagination(request)
+        target_user = get_admin_user(request, user_id)
         if target_user is None:
             flash(request, "没有找到这个用户。", "error")
             return redirect_to(request, "admin_dashboard")
+
+        pagination = build_pagination(
+            request,
+            int(target_user["entry_count"]),
+            requested_page,
+            page_size,
+        )
+        entries, legacy_entries = get_admin_user_records(
+            request,
+            user_id,
+            limit=page_size,
+            offset=pagination["offset"],
+        )
 
         return render_template(
             request,
@@ -2091,6 +2118,7 @@ def register_routes(app: FastAPI) -> None:
                 "target_user": target_user,
                 "entries": entries,
                 "legacy_entries": legacy_entries,
+                "pagination": pagination,
                 "week_chart": get_mood_chart_data(request, user_id, 7),
                 "month_chart": get_mood_chart_data(request, user_id, 30),
                 "recent_entries": [],
@@ -2164,18 +2192,22 @@ def register_routes(app: FastAPI) -> None:
             "ip": request.query_params.get("ip", "").strip(),
             "q": request.query_params.get("q", "").strip(),
         }
+        requested_page, page_size = parse_admin_pagination(request)
+        activity_summary = get_activity_log_summary(request, filters)
+        pagination = build_pagination(
+            request, int(activity_summary["activity_count"]), requested_page, page_size
+        )
         return render_template(
             request,
             "admin_activity.html",
             {
                 "active_page": "admin_activity",
                 "activity_logs": get_activity_logs(
-                    request,
-                    filters,
-                    limit=None if filters["user_id"] else 200,
+                    request, filters, limit=page_size, offset=pagination["offset"]
                 ),
                 "activity_user_stats": get_activity_user_stats(request),
                 "filters": filters,
+                "pagination": pagination,
                 "recent_entries": [],
             },
         )
@@ -2191,10 +2223,14 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "请选择要查看动态的用户。", "error")
             return redirect_to(request, "admin_activity")
 
+        filters = {"user_id": user_key, "ip": "", "q": ""}
+        requested_page, page_size = parse_admin_pagination(request)
+        activity_summary = get_activity_log_summary(request, filters)
+        pagination = build_pagination(
+            request, int(activity_summary["activity_count"]), requested_page, page_size
+        )
         activity_logs = get_activity_logs(
-            request,
-            {"user_id": user_key, "ip": "", "q": ""},
-            limit=None,
+            request, filters, limit=page_size, offset=pagination["offset"]
         )
         return render_template(
             request,
@@ -2203,6 +2239,8 @@ def register_routes(app: FastAPI) -> None:
                 "active_page": "admin_activity",
                 "activity_target": get_activity_user_target(request, user_key),
                 "activity_logs": activity_logs,
+                "latest_activity_at": activity_summary["latest_activity_at"],
+                "pagination": pagination,
                 "recent_entries": [],
             },
         )
@@ -2641,7 +2679,87 @@ def get_admin_stats(request: Request) -> dict[str, int]:
     }
 
 
-def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Row]:
+def parse_positive_int(value: str | None, default: int) -> int:
+    try:
+        parsed = int(value or "")
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def parse_admin_pagination(request: Request) -> tuple[int, int]:
+    page = parse_positive_int(request.query_params.get("page"), 1)
+    page_size = min(
+        parse_positive_int(
+            request.query_params.get("page_size"), ADMIN_PAGE_SIZE_DEFAULT
+        ),
+        ADMIN_PAGE_SIZE_MAX,
+    )
+    return page, page_size
+
+
+def build_pagination(
+    request: Request,
+    total_items: int,
+    requested_page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    page = min(requested_page, total_pages)
+    query = dict(request.query_params)
+    query["page_size"] = str(page_size)
+
+    def page_url(target_page: int) -> str:
+        target_query = {**query, "page": str(target_page)}
+        return f"{request.url.path}?{urlencode(target_query)}"
+
+    first_item = (page - 1) * page_size + 1 if total_items else 0
+    last_item = min(page * page_size, total_items)
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "offset": (page - 1) * page_size,
+        "first_item": first_item,
+        "last_item": last_item,
+        "previous_url": page_url(page - 1) if page > 1 else None,
+        "next_url": page_url(page + 1) if page < total_pages else None,
+    }
+
+
+def admin_user_filter(search_query: str) -> tuple[str, tuple[str, ...]]:
+    if not search_query:
+        return "", ()
+    like_query = f"%{search_query}%"
+    nickname_query = f"%{search_query.removeprefix('@')}%"
+    return (
+        """
+        WHERE users.real_name LIKE ?
+           OR users.nickname LIKE ?
+           OR users.grade LIKE ?
+           OR users.program LIKE ?
+           OR CAST(users.id AS TEXT) LIKE ?
+        """,
+        (like_query, nickname_query, like_query, like_query, like_query),
+    )
+
+
+def count_admin_users(request: Request, search_query: str = "") -> int:
+    where_sql, params = admin_user_filter(search_query)
+    row = get_db(request).execute(
+        f"SELECT COUNT(*) AS count FROM users {where_sql}", params
+    ).fetchone()
+    return int(row["count"])
+
+
+def get_admin_users(
+    request: Request,
+    search_query: str = "",
+    *,
+    limit: int = ADMIN_PAGE_SIZE_DEFAULT,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
     sql = """
     SELECT
         users.id,
@@ -2672,31 +2790,19 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
         ) AS latest_entry_at
     FROM users
     """
-    params: tuple[str, ...] = ()
-    if search_query:
-        sql += """
-        WHERE users.real_name LIKE ?
-           OR users.nickname LIKE ?
-           OR users.grade LIKE ?
-           OR users.program LIKE ?
-           OR CAST(users.id AS TEXT) LIKE ?
-        """
-        like_query = f"%{search_query}%"
-        nickname_query = f"%{search_query.removeprefix('@')}%"
-        params = (like_query, nickname_query, like_query, like_query, like_query)
+    where_sql, params = admin_user_filter(search_query)
+    sql += where_sql
 
     sql += """
     ORDER BY users.created_at DESC, users.id DESC
+    LIMIT ? OFFSET ?
     """
-    return get_db(request).execute(sql, params).fetchall()
+    return get_db(request).execute(sql, (*params, limit, offset)).fetchall()
 
 
-def get_admin_user_detail(
-    request: Request,
-    user_id: int,
-) -> tuple[sqlite3.Row | None, list[sqlite3.Row], list[sqlite3.Row]]:
+def get_admin_user(request: Request, user_id: int) -> sqlite3.Row | None:
     db = get_db(request)
-    user = db.execute(
+    return db.execute(
         """
         SELECT
             users.id,
@@ -2730,30 +2836,63 @@ def get_admin_user_detail(
         """,
         (user_id,),
     ).fetchone()
-    if user is None:
-        return None, [], []
 
-    entries = db.execute(
+
+def get_admin_user_records(
+    request: Request,
+    user_id: int,
+    *,
+    limit: int = ADMIN_PAGE_SIZE_DEFAULT,
+    offset: int = 0,
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
+    records = get_db(request).execute(
         """
-        SELECT
-            id,
-            user_id,
-            panas_responses,
-            positive_score,
-            negative_score,
-            mood_score,
-            daily_note,
-            entry_date,
-            created_at
-        FROM mood_entries
-        WHERE user_id = ?
-        ORDER BY created_at DESC, id DESC
+        SELECT *
+        FROM (
+            SELECT
+                0 AS record_group,
+                id,
+                user_id,
+                panas_responses,
+                positive_score,
+                negative_score,
+                mood_score,
+                daily_note,
+                entry_date,
+                created_at,
+                NULL AS source_entry_id,
+                NULL AS mood_emoji,
+                NULL AS reason,
+                NULL AS archived_at
+            FROM mood_entries
+            WHERE user_id = ?
+            UNION ALL
+            SELECT
+                1 AS record_group,
+                id,
+                user_id,
+                NULL AS panas_responses,
+                NULL AS positive_score,
+                NULL AS negative_score,
+                NULL AS mood_score,
+                NULL AS daily_note,
+                entry_date,
+                created_at,
+                source_entry_id,
+                mood_emoji,
+                reason,
+                archived_at
+            FROM legacy_mood_entries
+            WHERE user_id = ?
+        ) AS records
+        ORDER BY record_group ASC, created_at DESC, id DESC
+        LIMIT ? OFFSET ?
         """,
-        (user_id,),
+        (user_id, user_id, limit, offset),
     ).fetchall()
-
-    legacy_entries = get_legacy_user_entries(request, user_id)
-    return user, entries, legacy_entries
+    entries = [record for record in records if record["record_group"] == 0]
+    legacy_entries = [record for record in records if record["record_group"] == 1]
+    return entries, legacy_entries
 
 
 def get_activity_user_target(request: Request, user_key: str) -> dict[str, Any]:
@@ -2811,30 +2950,10 @@ def get_activity_user_target(request: Request, user_key: str) -> dict[str, Any]:
     }
 
 
-def get_activity_logs(
-    request: Request,
+def activity_log_filter(
     filters: dict[str, str] | None = None,
-    limit: int | None = 200,
-) -> list[sqlite3.Row]:
+) -> tuple[str, list[Any]]:
     filters = filters or {}
-    sql = """
-    SELECT
-        activity_logs.id,
-        activity_logs.user_id,
-        activity_logs.user_nickname,
-        activity_logs.ip_address,
-        activity_logs.method,
-        activity_logs.path,
-        activity_logs.status_code,
-        activity_logs.event_type,
-        activity_logs.action,
-        activity_logs.metadata,
-        activity_logs.created_at,
-        users.real_name,
-        users.nickname
-    FROM activity_logs
-    LEFT JOIN users ON users.id = activity_logs.user_id
-    """
     clauses: list[str] = []
     params: list[Any] = []
 
@@ -2900,15 +3019,58 @@ def get_activity_logs(
             ]
         )
 
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
+    where_sql = " WHERE " + " AND ".join(clauses) if clauses else ""
+    return where_sql, params
 
-    sql += """
+
+def get_activity_log_summary(
+    request: Request,
+    filters: dict[str, str] | None = None,
+) -> sqlite3.Row:
+    where_sql, params = activity_log_filter(filters)
+    row = get_db(request).execute(
+        f"""
+        SELECT
+            COUNT(*) AS activity_count,
+            MAX(activity_logs.created_at) AS latest_activity_at
+        FROM activity_logs
+        LEFT JOIN users ON users.id = activity_logs.user_id
+        {where_sql}
+        """,
+        tuple(params),
+    ).fetchone()
+    return row
+
+
+def get_activity_logs(
+    request: Request,
+    filters: dict[str, str] | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    where_sql, params = activity_log_filter(filters)
+    sql = f"""
+    SELECT
+        activity_logs.id,
+        activity_logs.user_id,
+        activity_logs.user_nickname,
+        activity_logs.ip_address,
+        activity_logs.method,
+        activity_logs.path,
+        activity_logs.status_code,
+        activity_logs.event_type,
+        activity_logs.action,
+        activity_logs.metadata,
+        activity_logs.created_at,
+        users.real_name,
+        users.nickname
+    FROM activity_logs
+    LEFT JOIN users ON users.id = activity_logs.user_id
+    {where_sql}
     ORDER BY activity_logs.created_at DESC, activity_logs.id DESC
+    LIMIT ? OFFSET ?
     """
-    if limit is not None:
-        sql += " LIMIT ?"
-        params.append(limit)
+    params.extend([limit, offset])
     return get_db(request).execute(sql, tuple(params)).fetchall()
 
 

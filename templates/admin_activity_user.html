@@ -23,15 +23,16 @@
 <section class="admin-summary" aria-label="用户动态概览">
   <div>
     <span>动态数</span>
-    <strong>{{ activity_logs|length }}</strong>
+    <strong>{{ pagination.total_items }}</strong>
   </div>
   <div>
     <span>最近动态</span>
-    <strong>{{ activity_logs[0]["created_at"] | datetime_cn if activity_logs else "暂无" }}</strong>
+    <strong>{{ latest_activity_at | datetime_cn if latest_activity_at else "暂无" }}</strong>
   </div>
 </section>
 
 {% set activity_log_aria_label = "用户全部动态" %}
 {% set empty_activity_message = "这个用户还没有访问动态。" %}
 {% include "_activity_log_list.html" %}
+{% include "_pagination.html" %}
 {% endblock %}
