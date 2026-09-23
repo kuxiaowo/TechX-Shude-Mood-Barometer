@@ -14,6 +14,8 @@ from joserfc import jwt
 from joserfc.jwk import KeySet
 from starlette.datastructures import Headers, MutableHeaders
 
+from database_adapter import D1GatewayAdapter
+
 SESSION_COOKIE = "techx_session"
 BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
 
@@ -52,17 +54,31 @@ class DatabaseSessionMiddleware:
         app,
         *,
         database: str,
+        backend: str = "sqlite",
+        d1_gateway_url: str = "",
+        d1_gateway_secret: str = "",
+        d1_gateway_timeout: float = 10.0,
         secure: bool = True,
         idle_seconds: int = 7 * 86400,
         absolute_seconds: int = 30 * 86400,
     ) -> None:
         self.app = app
         self.database = database
+        self.backend = backend.strip().lower()
+        self.d1_gateway_url = d1_gateway_url
+        self.d1_gateway_secret = d1_gateway_secret
+        self.d1_gateway_timeout = d1_gateway_timeout
         self.secure = secure
         self.idle_seconds = idle_seconds
         self.absolute_seconds = absolute_seconds
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self):
+        if self.backend == "d1":
+            return D1GatewayAdapter(
+                self.d1_gateway_url,
+                self.d1_gateway_secret,
+                timeout=self.d1_gateway_timeout,
+            )
         connection = sqlite3.connect(self.database, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -127,15 +143,24 @@ class DatabaseSessionMiddleware:
                     )
                 with self._connect() as db:
                     rotate = bool(session_data.pop("_rotate", False))
+                    rotated_token_hash = ""
                     if rotate and token_hash:
-                        db.execute(
-                            "DELETE FROM web_sessions WHERE token_hash = ?",
-                            (token_hash,),
-                        )
+                        if isinstance(db, D1GatewayAdapter):
+                            rotated_token_hash = token_hash
+                        else:
+                            db.execute(
+                                "DELETE FROM web_sessions WHERE token_hash = ?",
+                                (token_hash,),
+                            )
                         raw_token = ""
                         token_hash = ""
                         existing = None
                     if not session_data:
+                        if rotated_token_hash:
+                            db.execute(
+                                "DELETE FROM web_sessions WHERE token_hash = ?",
+                                (rotated_token_hash,),
+                            )
                         if token_hash:
                             db.execute(
                                 "DELETE FROM web_sessions WHERE token_hash = ?",
@@ -196,22 +221,27 @@ class DatabaseSessionMiddleware:
                                 await send(message)
                                 return
                         else:
-                            db.execute(
-                                """
+                            insert_sql = """
                                 INSERT INTO web_sessions (
                                     token_hash, user_id, auth_sub, oidc_sid, data_json,
                                     created_at, last_seen_at, idle_expires_at,
                                     absolute_expires_at
                                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                (
-                                    token_hash,
-                                    *values[:4],
-                                    created_at,
-                                    *values[4:],
-                                    absolute_expires_at,
-                                ),
+                                """
+                            insert_params = (
+                                token_hash,
+                                *values[:4],
+                                created_at,
+                                *values[4:],
+                                absolute_expires_at,
                             )
+                            if rotated_token_hash and isinstance(db, D1GatewayAdapter):
+                                db.batch([
+                                    ("DELETE FROM web_sessions WHERE token_hash = ?", (rotated_token_hash,)),
+                                    (insert_sql, insert_params),
+                                ])
+                            else:
+                                db.execute(insert_sql, insert_params)
                         db.commit()
                         response_headers.append(
                             "set-cookie",
