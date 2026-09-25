@@ -64,6 +64,7 @@ class D1GatewayAdapter:
         signature = hmac.new(self.secret.encode(), canonical, hashlib.sha256).hexdigest()
         req = urllib.request.Request(self.url, raw, {
             "Content-Type": "application/json",
+            "User-Agent": "NetHub-D1-Client/1.0",
             "X-DB-Request-ID": request_id,
             "X-DB-Timestamp": str(timestamp),
             "X-DB-Signature": signature,
