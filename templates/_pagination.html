@@ -1,0 +1,21 @@
+{% if pagination.total_items %}
+  <nav class="admin-pagination" aria-label="分页导航">
+    <p>
+      第 {{ pagination.first_item }}–{{ pagination.last_item }} 条，
+      共 {{ pagination.total_items }} 条
+    </p>
+    <div>
+      {% if pagination.previous_url %}
+        <a class="outline-button compact" href="{{ pagination.previous_url }}" rel="prev">上一页</a>
+      {% else %}
+        <span class="outline-button compact is-disabled" aria-disabled="true">上一页</span>
+      {% endif %}
+      <span>第 {{ pagination.page }} / {{ pagination.total_pages }} 页</span>
+      {% if pagination.next_url %}
+        <a class="outline-button compact" href="{{ pagination.next_url }}" rel="next">下一页</a>
+      {% else %}
+        <span class="outline-button compact is-disabled" aria-disabled="true">下一页</span>
+      {% endif %}
+    </div>
+  </nav>
+{% endif %}

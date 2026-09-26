@@ -1738,6 +1738,22 @@ textarea:focus-visible {
   margin-top: 18px;
 }
 
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+}
+
+.admin-pagination p { margin: 0; color: var(--muted); }
+.admin-pagination div { display: flex; align-items: center; gap: 12px; }
+.admin-pagination .is-disabled { opacity: 0.45; pointer-events: none; }
+
 .adaptive-scroll-card > .admin-entry-list {
   flex: 1 1 auto;
   overflow-y: auto;

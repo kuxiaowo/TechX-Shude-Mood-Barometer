@@ -919,7 +919,7 @@ def test_admin_activity_logs_key_actions_and_filters_static_assets(app, client):
     assert "mood_report_created" not in detail.text
 
 
-def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
+def test_admin_activity_user_links_paginate_selected_user_logs(app, client):
     register(client, nickname="admin-user", real_name="管理员")
     client.post("/logout")
     register(client, nickname="student", real_name="李四")
@@ -1012,17 +1012,44 @@ def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
     assert "用户动态详情" in detail.text
     assert "李四" in detail.text
     assert "@student" in detail.text
-    assert "student_action_000" in detail.text
     assert "student_action_204" in detail.text
     assert "other_action" not in detail.text
-    assert detail.text.count("activity-log-entry") >= 205
+    assert detail.text.count("activity-log-entry") == 50
+    assert "student_action_000" not in detail.text
+    assert "下一页" in detail.text
+
+    oldest_page = client.get(
+        f"/admin/activity/user?user_id={student_id}&page=5&page_size=50"
+    )
+    assert oldest_page.status_code == 200
+    assert "student_action_000" in oldest_page.text
+    assert "student_action_204" not in oldest_page.text
 
     filtered = client.get(f"/admin/activity?user_id={student_id}")
     assert filtered.status_code == 200
-    assert "student_action_000" in filtered.text
     assert "student_action_204" in filtered.text
+    assert "student_action_000" not in filtered.text
     assert "other_action" not in filtered.text
-    assert filtered.text.count("activity-log-entry") >= 205
+    assert filtered.text.count("activity-log-entry") == 50
+    assert f"user_id={student_id}&amp;page_size=50&amp;page=2" in filtered.text
+
+    capped = client.get(
+        f"/admin/activity?user_id={student_id}&page_size=500"
+    )
+    assert capped.status_code == 200
+    assert capped.text.count("activity-log-entry") == 100
+    assert f"user_id={student_id}&amp;page_size=100&amp;page=2" in capped.text
+
+    filtered_second_page = client.get(
+        f"/admin/activity?user_id={student_id}&q=student_action&page=2&page_size=40"
+    )
+    assert filtered_second_page.status_code == 200
+    assert filtered_second_page.text.count("activity-log-entry") == 40
+    assert "student_action_164" in filtered_second_page.text
+    assert "student_action_125" in filtered_second_page.text
+    assert "student_action_204" not in filtered_second_page.text
+    assert f"user_id={student_id}&amp;q=student_action" in filtered_second_page.text
+    assert "page=3&amp;page_size=40" in filtered_second_page.text
 
     nickname_filtered = client.get("/admin/activity?user_id=@student")
     assert nickname_filtered.status_code == 200
@@ -1033,6 +1060,144 @@ def test_admin_activity_user_links_show_all_logs_for_selected_user(app, client):
     assert keyword_filtered.status_code == 200
     assert "student_action_204" in keyword_filtered.text
     assert "other_action" not in keyword_filtered.text
+
+
+def test_admin_user_list_pagination_limits_and_preserves_search(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    now = datetime.now()
+    with sqlite3.connect(app.state.config["DATABASE"]) as db:
+        db.executemany(
+            """
+            INSERT INTO users
+                (real_name, nickname, grade, program, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    f"分页用户 {index:03}",
+                    f"paged-{index:03}",
+                    "2025",
+                    "IB",
+                    (now + timedelta(seconds=index)).isoformat(timespec="seconds"),
+                )
+                for index in range(120)
+            ],
+        )
+        db.commit()
+
+    first_page = client.get("/admin")
+    assert first_page.status_code == 200
+    assert (
+        admin_user_panel(first_page.text).count(
+            '<div class="admin-user-row admin-user-select-row">'
+        )
+        == 50
+    )
+    assert "共 121 条" in first_page.text
+
+    capped_page = client.get("/admin?page_size=500")
+    assert (
+        admin_user_panel(capped_page.text).count(
+            '<div class="admin-user-row admin-user-select-row">'
+        )
+        == 100
+    )
+    assert "page_size=100" in capped_page.text
+
+    last_page = client.get("/admin?page=999")
+    assert (
+        admin_user_panel(last_page.text).count(
+            '<div class="admin-user-row admin-user-select-row">'
+        )
+        == 21
+    )
+    assert "第 3 / 3 页" in last_page.text
+
+    filtered = client.get("/admin?q=paged-0&page=2&page_size=20")
+    filtered_panel = admin_user_panel(filtered.text)
+    assert filtered_panel.count(
+        '<div class="admin-user-row admin-user-select-row">'
+    ) == 20
+    assert "@paged-079" in filtered_panel
+    assert "q=paged-0" in filtered.text
+    assert "page_size=20" in filtered.text
+
+
+def test_admin_user_records_are_paginated_across_current_and_legacy(app, client):
+    register(client, nickname="admin-user", real_name="管理员")
+    client.post("/logout")
+    register(client, nickname="student", real_name="李四")
+    client.post("/logout")
+    login(client, nickname="admin-user")
+    student_id = rows(
+        app, "SELECT id FROM users WHERE nickname = 'student'"
+    )[0]["id"]
+    now = datetime.now()
+    with sqlite3.connect(app.state.config["DATABASE"]) as db:
+        db.executemany(
+            """
+            INSERT INTO mood_entries
+                (user_id, panas_responses, positive_score, negative_score,
+                 mood_score, daily_note, entry_date, created_at)
+            VALUES (?, '{}', 50, 50, 50, ?, ?, ?)
+            """,
+            [
+                (
+                    student_id,
+                    f"分页记录 {index:03}",
+                    f"2026-01-{index % 28 + 1:02}",
+                    (now + timedelta(seconds=index)).isoformat(timespec="seconds"),
+                )
+                for index in range(55)
+            ],
+        )
+        db.executemany(
+            """
+            INSERT INTO legacy_mood_entries
+                (source_entry_id, user_id, mood_emoji, reason, entry_date,
+                 created_at, archived_at)
+            VALUES (?, ?, '🙂', ?, '2025-01-01', ?, ?)
+            """,
+            [
+                (
+                    1000 + index,
+                    student_id,
+                    f"旧记录 {index:03}",
+                    (now + timedelta(seconds=index)).isoformat(timespec="seconds"),
+                    now.isoformat(timespec="seconds"),
+                )
+                for index in range(10)
+            ],
+        )
+        db.commit()
+
+    first_page = client.get(f"/admin/users/{student_id}")
+    assert first_page.status_code == 200
+    assert first_page.text.count('class="admin-entry"') == 50
+    assert "旧版心情存档" not in first_page.text
+    assert "共 65 条" in first_page.text
+
+    second_page = client.get(f"/admin/users/{student_id}?page=2")
+    assert second_page.text.count('class="admin-entry"') == 5
+    assert second_page.text.count("history-entry legacy-entry") == 10
+    assert "分页记录 000" in second_page.text
+    assert "旧记录 000" in second_page.text
+
+
+def test_non_admin_cannot_bypass_admin_pagination_routes(client):
+    register(client, nickname="admin-user")
+    client.post("/logout")
+    register(client, nickname="student")
+
+    for path in (
+        "/admin?page=2&page_size=100",
+        "/admin/users/1?page=2&page_size=100",
+        "/admin/activity?page=2&page_size=100",
+        "/admin/activity/user?user_id=1&page=2&page_size=100",
+    ):
+        response = client.get(path)
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("/profile")
 
 
 def test_non_admin_user_cannot_control_users(app, client):

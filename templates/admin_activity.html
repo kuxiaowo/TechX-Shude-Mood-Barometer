@@ -62,4 +62,5 @@
 
 {% set activity_log_aria_label = "全部动态" if filters.user_id else "最近动态" %}
 {% include "_activity_log_list.html" %}
+{% include "_pagination.html" %}
 {% endblock %}

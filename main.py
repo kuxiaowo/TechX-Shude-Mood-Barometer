@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import secrets
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from joserfc.errors import JoseError
 from starlette.routing import NoMatchFound
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from database_adapter import D1GatewayAdapter, SQLiteAdapter
 from techx_auth import (
     DatabaseSessionMiddleware,
     configure_oidc,
@@ -115,6 +117,8 @@ REGISTRATION_IP_LIMIT_MAX = 100
 REGISTRATION_WINDOW_HOURS = 24
 AUDIT_RETENTION_DAYS = 30
 TRUSTED_PROXY_HOSTS = {"127.0.0.1", "::1", "localhost"}
+ADMIN_PAGE_SIZE_DEFAULT = 50
+ADMIN_PAGE_SIZE_MAX = 100
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 LOGGER = logging.getLogger("techx")
@@ -167,6 +171,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     config = {
         "TESTING": False,
         "DATABASE": os.environ.get("MOOD_DB_PATH", str(DEFAULT_DATABASE)),
+        "DB_BACKEND": os.environ.get("MOOD_DB_BACKEND", "sqlite").strip().lower(),
+        "D1_GATEWAY_URL": os.environ.get("MOOD_D1_GATEWAY_URL", "").strip(),
+        "D1_GATEWAY_SECRET": os.environ.get("MOOD_D1_GATEWAY_SECRET", ""),
+        "D1_GATEWAY_TIMEOUT": float(os.environ.get("MOOD_D1_GATEWAY_TIMEOUT", "10")),
         "PUBLIC_BASE_URL": os.environ.get(
             "MOOD_PUBLIC_BASE_URL", "http://127.0.0.1:5000"
         ).rstrip("/"),
@@ -195,11 +203,23 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     validate_service_origin(config["OIDC_ISSUER"], "ACCOUNTS_ISSUER")
     if not str(config["OIDC_CLIENT_ID"]).strip():
         raise ValueError("ACCOUNTS_CLIENT_ID cannot be empty")
+    backend = str(config.get("DB_BACKEND") or "sqlite").strip().lower()
+    if backend not in {"sqlite", "d1"}:
+        raise ValueError(f"Unsupported MOOD_DB_BACKEND: {backend}")
+    if backend == "d1" and (
+        not str(config.get("D1_GATEWAY_URL") or "").strip()
+        or not str(config.get("D1_GATEWAY_SECRET") or "")
+    ):
+        raise ValueError("D1 backend requires gateway URL and secret")
 
     app.state.config = config
     app.add_middleware(
         DatabaseSessionMiddleware,
         database=config["DATABASE"],
+        backend=str(config.get("DB_BACKEND") or "sqlite"),
+        d1_gateway_url=str(config.get("D1_GATEWAY_URL") or ""),
+        d1_gateway_secret=str(config.get("D1_GATEWAY_SECRET") or ""),
+        d1_gateway_timeout=float(config.get("D1_GATEWAY_TIMEOUT") or 10),
         secure=bool(config["SESSION_COOKIE_SECURE"]),
     )
     app.state.oauth = configure_oidc(config)
@@ -242,13 +262,29 @@ def database_path(app: FastAPI) -> Path:
     return Path(app.state.config["DATABASE"])
 
 
-def get_db(request: Request) -> sqlite3.Connection:
+def get_db(request: Request):
     db = getattr(request.state, "db", None)
     if db is None:
-        path = database_path(request.app)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(path)
-        db.row_factory = sqlite3.Row
+        config = request.app.state.config
+        backend = str(config.get("DB_BACKEND") or "sqlite").strip().lower()
+        gateway_url = str(config.get("D1_GATEWAY_URL") or "").strip()
+        if backend == "d1":
+            if not gateway_url:
+                raise RuntimeError("MOOD_D1_GATEWAY_URL is required with D1 backend")
+            secret = str(config.get("D1_GATEWAY_SECRET") or "")
+            if not secret:
+                raise RuntimeError("MOOD_D1_GATEWAY_SECRET is required with D1 gateway")
+            db = D1GatewayAdapter(
+                gateway_url,
+                secret,
+                timeout=float(config.get("D1_GATEWAY_TIMEOUT") or 10),
+            )
+        elif backend == "sqlite":
+            path = database_path(request.app)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            db = SQLiteAdapter.connect(path)
+        else:
+            raise RuntimeError(f"Unsupported MOOD_DB_BACKEND: {backend}")
         request.state.db = db
     return db
 
@@ -261,6 +297,10 @@ def close_db(request: Request) -> None:
 
 
 def init_db(app: FastAPI) -> None:
+    # D1 schema is deployed by the separate migration workflow.  Never run
+    # DDL or compatibility ALTER TABLE statements against the production API.
+    if str(app.state.config.get("DB_BACKEND") or "sqlite").strip().lower() == "d1":
+        return
     path = database_path(app)
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as db:
@@ -576,9 +616,20 @@ def maybe_prune_audit_rows(request: Request) -> None:
     if getattr(request.app.state, "audit_pruned_on", None) == today:
         return
 
-    prune_old_audit_rows(get_db(request))
-    prune_expired_sessions(get_db(request))
-    get_db(request).commit()
+    db = get_db(request)
+    now = datetime.now()
+    cutoff = (now - timedelta(days=AUDIT_RETENTION_DAYS)).isoformat(timespec="seconds")
+    session_now = int(now.timestamp())
+    if isinstance(db, D1GatewayAdapter):
+        db.batch([
+            ("DELETE FROM activity_logs WHERE created_at < ?", (cutoff,)),
+            ("DELETE FROM registration_attempts WHERE created_at < ?", (cutoff,)),
+            ("DELETE FROM web_sessions WHERE idle_expires_at <= ? OR absolute_expires_at <= ?", (session_now, session_now)),
+        ])
+    else:
+        prune_old_audit_rows(db)
+        prune_expired_sessions(db)
+        db.commit()
     request.app.state.audit_pruned_on = today
 
 
@@ -736,20 +787,25 @@ def create_registration_attempt(
     nickname: str,
     result: str,
 ) -> int:
-    cursor = get_db(request).execute(
-        """
+    db = get_db(request)
+    sql = """
         INSERT INTO registration_attempts
             (ip_address, nickname, result, created_at)
         VALUES (?, ?, ?, ?)
-        """,
-        (
+        """
+    params = (
             ip_address,
             nickname,
             result,
             datetime.now().isoformat(timespec="seconds"),
-        ),
-    )
-    get_db(request).commit()
+        )
+    if isinstance(db, D1GatewayAdapter):
+        row = db.execute(sql + " RETURNING id", params).fetchone()
+        if row is None:
+            raise sqlite3.OperationalError("registration attempt insert returned no id")
+        return int(row["id"])
+    cursor = db.execute(sql, params)
+    db.commit()
     return int(cursor.lastrowid)
 
 
@@ -792,8 +848,98 @@ def record_activity(
     elif user_nickname is None:
         user_nickname = ""
 
-    get_db(request).execute(
-        """
+    sql, params = _activity_insert_statement(
+        request,
+        event_type,
+        action,
+        status_code=status_code,
+        metadata=metadata,
+        user_id=user_id,
+        user_nickname=user_nickname,
+        ip_address=ip_address,
+    )
+    get_db(request).execute(sql, params)
+    get_db(request).commit()
+
+
+def execute_with_activity(
+    request: Request,
+    statements: list[tuple[str, tuple[Any, ...]]],
+    action: str,
+    *,
+    status_code: int = 302,
+    metadata: dict[str, Any] | None = None,
+    user_id: int | None = None,
+    user_nickname: str | None = None,
+    audit_only_if_user_exists: int | None = None,
+    ip_address: str | None = None,
+) -> list[Any]:
+    """Commit related mutations and their audit row as one database unit."""
+    db = get_db(request)
+    audit = _activity_insert_statement(
+        request, "operation", action, status_code=status_code, metadata=metadata,
+        user_id=user_id, user_nickname=user_nickname,
+        only_if_user_exists=audit_only_if_user_exists,
+        ip_address=ip_address,
+    )
+    if isinstance(db, D1GatewayAdapter):
+        return db.batch([*statements, audit])
+    try:
+        cursors = [db.execute(sql, params) for sql, params in statements]
+        db.execute(*audit)
+        db.commit()
+        return cursors
+    except Exception:
+        db.rollback()
+        raise
+
+
+def update_registration_attempt_with_activity(
+    request: Request,
+    attempt_id: int,
+    result: str,
+    action: str,
+    *,
+    status_code: int,
+    metadata: dict[str, Any],
+    ip_address: str,
+    user_id: int | None = None,
+    user_nickname: str | None = None,
+) -> None:
+    execute_with_activity(
+        request,
+        [("UPDATE registration_attempts SET result = ?, user_id = ? WHERE id = ?", (
+            result, user_id, attempt_id,
+        ))],
+        action,
+        status_code=status_code,
+        metadata=metadata,
+        user_id=user_id,
+        user_nickname=user_nickname,
+        ip_address=ip_address,
+    )
+
+
+def _activity_insert_statement(
+    request: Request,
+    event_type: str,
+    action: str,
+    *,
+    status_code: int | None = None,
+    metadata: dict[str, Any] | None = None,
+    user_id: int | None = None,
+    user_nickname: str | None = None,
+    ip_address: str | None = None,
+    only_if_user_exists: int | None = None,
+) -> tuple[str, tuple[Any, ...]]:
+    """Build the audit insert so D1 callers can include it in one batch."""
+    current_user = None if user_id is not None else get_current_user(request)
+    if current_user is not None:
+        user_id = int(current_user["id"])
+        user_nickname = str(current_user["nickname"])
+    elif user_nickname is None:
+        user_nickname = ""
+    sql = """
         INSERT INTO activity_logs
             (
                 user_id,
@@ -808,8 +954,8 @@ def record_activity(
                 created_at
             )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
+        """
+    params = (
             user_id,
             user_nickname or "",
             ip_address or get_client_ip(request),
@@ -820,9 +966,15 @@ def record_activity(
             action,
             json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
             datetime.now().isoformat(timespec="seconds"),
-        ),
-    )
-    get_db(request).commit()
+        )
+    if only_if_user_exists is not None:
+        sql = sql.replace(
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
+            "WHERE EXISTS (SELECT 1 FROM users WHERE id = ?)",
+        )
+        params = (*params, only_if_user_exists)
+    return sql, params
 
 
 def flash(request: Request, message: str, category: str = "message") -> None:
@@ -1010,19 +1162,34 @@ def find_or_create_oidc_user(
 
     nickname = unique_local_nickname(db, preferred, auth_sub)
     now = datetime.now().isoformat(timespec="seconds")
-    cursor = db.execute(
-        """
+    insert_sql = """
         INSERT INTO users (
             real_name, nickname, grade, program, is_admin, is_active,
             privacy_consent_at, password_hash, auth_sub, created_at
         ) VALUES (?, ?, '', '', 0, 1, '', '', ?, ?)
-        """,
-        (display_name[:64], nickname, auth_sub, now),
-    )
+        """
+    insert_params = (display_name[:64], nickname, auth_sub, now)
+    if isinstance(db, D1GatewayAdapter):
+        for _attempt in range(3):
+            cursor = db.execute(
+                insert_sql + " ON CONFLICT DO NOTHING RETURNING *", insert_params
+            )
+            user = cursor.fetchone()
+            if user is not None:
+                return user, True
+            user = db.execute(
+                "SELECT * FROM users WHERE auth_sub = ?", (auth_sub,)
+            ).fetchone()
+            if user is not None:
+                return user, False
+            # A different subject concurrently won the nickname. Recompute a
+            # subject-qualified candidate and retry without relying on lastrowid.
+            nickname = unique_local_nickname(db, preferred, auth_sub)
+            insert_params = (display_name[:64], nickname, auth_sub, now)
+        raise sqlite3.IntegrityError("OIDC user creation conflicted")
+    cursor = db.execute(insert_sql, insert_params)
     db.commit()
-    user = db.execute(
-        "SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)
-    ).fetchone()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
     return user, True
 
 
@@ -1293,7 +1460,11 @@ def register_routes(app: FastAPI) -> None:
             return JSONResponse({"error": "invalid_logout_token"}, status_code=400)
 
         db = get_db(request)
-        db.execute("BEGIN IMMEDIATE")
+        is_d1 = str(request.app.state.config.get("DB_BACKEND") or "sqlite").lower() == "d1"
+        # D1 has no connection-level BEGIN IMMEDIATE.  Keep the replay check,
+        # session revocation and audit in one gateway batch instead.
+        if not is_d1:
+            db.execute("BEGIN IMMEDIATE")
         if db.execute(
             "SELECT 1 FROM backchannel_logout_events WHERE jti = ?",
             (str(claims["jti"]),),
@@ -1301,24 +1472,52 @@ def register_routes(app: FastAPI) -> None:
             db.commit()
             return JSONResponse({"ok": True, "revoked": 0})
         if claims.get("sid"):
-            cursor = db.execute(
-                "DELETE FROM web_sessions WHERE oidc_sid = ?",
-                (str(claims["sid"]),),
-            )
+            revoke_sql, revoke_params = "DELETE FROM web_sessions WHERE oidc_sid = ?", (str(claims["sid"]),)
         else:
-            cursor = db.execute(
-                "DELETE FROM web_sessions WHERE auth_sub = ?",
-                (str(claims["sub"]),),
-            )
-        db.execute(
-            "INSERT INTO backchannel_logout_events (jti, received_at) VALUES (?, ?)",
-            (str(claims["jti"]), datetime.now().isoformat(timespec="seconds")),
-        )
+            revoke_sql, revoke_params = "DELETE FROM web_sessions WHERE auth_sub = ?", (str(claims["sub"]),)
+        # This per-request suffix proves which concurrent delivery won the JTI claim.
+        received_at = datetime.now().isoformat(timespec="microseconds") + "-" + secrets.token_hex(8)
         cutoff = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
-        db.execute(
-            "DELETE FROM backchannel_logout_events WHERE received_at < ?", (cutoff,)
-        )
-        db.commit()
+        if is_d1:
+            _audit_sql, audit_params = _activity_insert_statement(
+                request, "operation", "oidc_backchannel_logout", status_code=200,
+                metadata={"jti": str(claims["jti"]), "sid": claims.get("sid"), "sub": claims.get("sub")},
+            )
+            conditional_revoke_sql = revoke_sql + (
+                " AND EXISTS (SELECT 1 FROM backchannel_logout_events "
+                "WHERE jti = ? AND received_at = ?)"
+            )
+            conditional_audit_sql = """
+                INSERT INTO activity_logs
+                    (user_id, user_nickname, ip_address, method, path, status_code,
+                     event_type, action, metadata, created_at)
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                WHERE EXISTS (SELECT 1 FROM backchannel_logout_events
+                              WHERE jti = ? AND received_at = ?)
+            """
+            cursors = db.batch([
+                ("INSERT OR IGNORE INTO backchannel_logout_events (jti, received_at) VALUES (?, ?)", (str(claims["jti"]), received_at)),
+                (conditional_revoke_sql, (*revoke_params, str(claims["jti"]), received_at)),
+                (conditional_audit_sql, (*audit_params, str(claims["jti"]), received_at)),
+                ("DELETE FROM backchannel_logout_events WHERE received_at < ?", (cutoff,)),
+            ])
+            cursor = cursors[1]
+        else:
+            cursor = db.execute(revoke_sql, revoke_params)
+            db.execute(
+                "INSERT INTO backchannel_logout_events (jti, received_at) VALUES (?, ?)",
+                (str(claims["jti"]), received_at),
+            )
+            audit_sql, audit_params = _activity_insert_statement(
+                request, "operation", "oidc_backchannel_logout", status_code=200,
+                metadata={"jti": str(claims["jti"]), "sid": claims.get("sid"), "sub": claims.get("sub")},
+            )
+            db.execute(audit_sql, audit_params)
+        if not is_d1:
+            db.execute(
+                "DELETE FROM backchannel_logout_events WHERE received_at < ?", (cutoff,)
+            )
+            db.commit()
         return JSONResponse({"ok": True, "revoked": cursor.rowcount})
 
     @app.get("/auth/logged-out", name="auth_logged_out")
@@ -1347,30 +1546,79 @@ def register_routes(app: FastAPI) -> None:
             privacy_consent = form.get("privacy_consent") == "yes"
             ip_address = get_client_ip(request)
             registration_limit = get_registration_ip_limit(request)
-            recent_attempts = count_recent_registration_attempts(request, ip_address)
-            attempt_result = (
-                "rate_limited" if recent_attempts >= registration_limit else "started"
-            )
-            attempt_id = create_registration_attempt(
-                request,
-                ip_address,
-                nickname,
-                attempt_result,
-            )
+            db = get_db(request)
+            rate_limit_audit_recorded = False
+            if isinstance(db, D1GatewayAdapter):
+                now = datetime.now()
+                cutoff = (now - timedelta(hours=REGISTRATION_WINDOW_HOURS)).isoformat(
+                    timespec="seconds"
+                )
+                reserved = db.execute(
+                    """
+                    INSERT INTO registration_attempts
+                        (ip_address, nickname, result, created_at)
+                    SELECT ?, ?, 'started', ?
+                    WHERE (
+                        SELECT COUNT(*) FROM registration_attempts
+                        WHERE ip_address = ? AND created_at >= ?
+                    ) < ?
+                    RETURNING id
+                    """,
+                    (
+                        ip_address,
+                        nickname,
+                        now.isoformat(timespec="seconds"),
+                        ip_address,
+                        cutoff,
+                        registration_limit,
+                    ),
+                ).fetchone()
+                if reserved is None:
+                    recent_attempts = count_recent_registration_attempts(
+                        request, ip_address
+                    )
+                    audit_sql, audit_params = _activity_insert_statement(
+                        request, "operation", "register_rate_limited", status_code=429,
+                        metadata={"nickname": nickname, "attempts_last_24h": recent_attempts + 1, "limit": registration_limit},
+                        ip_address=ip_address,
+                    )
+                    db.batch([
+                        ("INSERT INTO registration_attempts (ip_address, nickname, result, created_at) VALUES (?, ?, 'rate_limited', ?)", (
+                            ip_address, nickname, now.isoformat(timespec="seconds"),
+                        )),
+                        (audit_sql, audit_params),
+                    ])
+                    attempt_id = 0
+                    rate_limit_audit_recorded = True
+                else:
+                    attempt_id = int(reserved["id"])
+                    recent_attempts = registration_limit - 1
+            else:
+                recent_attempts = count_recent_registration_attempts(request, ip_address)
+                attempt_result = (
+                    "rate_limited" if recent_attempts >= registration_limit else "started"
+                )
+                attempt_id = create_registration_attempt(
+                    request,
+                    ip_address,
+                    nickname,
+                    attempt_result,
+                )
 
             if recent_attempts >= registration_limit:
-                record_activity(
-                    request,
-                    "operation",
-                    "register_rate_limited",
-                    status_code=429,
-                    metadata={
-                        "nickname": nickname,
-                        "attempts_last_24h": recent_attempts + 1,
-                        "limit": registration_limit,
-                    },
-                    ip_address=ip_address,
-                )
+                if not rate_limit_audit_recorded:
+                    record_activity(
+                        request,
+                        "operation",
+                        "register_rate_limited",
+                        status_code=429,
+                        metadata={
+                            "nickname": nickname,
+                            "attempts_last_24h": recent_attempts + 1,
+                            "limit": registration_limit,
+                        },
+                        ip_address=ip_address,
+                    )
                 flash(
                     request,
                     "该 IP 注册过于频繁，请 24 小时后再试或联系管理员。",
@@ -1379,10 +1627,8 @@ def register_routes(app: FastAPI) -> None:
                 return render_template(request, "register.html", status_code=429)
 
             if not real_name or not nickname or not password:
-                update_registration_attempt(request, attempt_id, "missing_fields")
-                record_activity(
-                    request,
-                    "operation",
+                update_registration_attempt_with_activity(
+                    request, attempt_id, "missing_fields",
                     "register_failed",
                     status_code=400,
                     metadata={"reason": "missing_fields", "nickname": nickname},
@@ -1392,12 +1638,8 @@ def register_routes(app: FastAPI) -> None:
                 return render_template(request, "register.html")
 
             if not privacy_consent:
-                update_registration_attempt(
-                    request, attempt_id, "privacy_consent_missing"
-                )
-                record_activity(
-                    request,
-                    "operation",
+                update_registration_attempt_with_activity(
+                    request, attempt_id, "privacy_consent_missing",
                     "register_failed",
                     status_code=400,
                     metadata={
@@ -1419,10 +1661,8 @@ def register_routes(app: FastAPI) -> None:
                 program,
                 PROGRAMS,
             ):
-                update_registration_attempt(request, attempt_id, "invalid_profile")
-                record_activity(
-                    request,
-                    "operation",
+                update_registration_attempt_with_activity(
+                    request, attempt_id, "invalid_profile",
                     "register_failed",
                     status_code=400,
                     metadata={"reason": "invalid_profile", "nickname": nickname},
@@ -1438,8 +1678,7 @@ def register_routes(app: FastAPI) -> None:
                 ).strip()
                 is_admin = int(bool(configured_admin) and nickname == configured_admin)
                 created_at = datetime.now().isoformat(timespec="seconds")
-                db.execute(
-                    """
+                insert_sql = """
                     INSERT INTO users
                         (
                             real_name,
@@ -1452,8 +1691,8 @@ def register_routes(app: FastAPI) -> None:
                             created_at
                         )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
+                """
+                insert_params = (
                         real_name,
                         nickname,
                         grade,
@@ -1462,14 +1701,56 @@ def register_routes(app: FastAPI) -> None:
                         created_at,
                         generate_password_hash(password),
                         created_at,
-                    ),
-                )
-                db.commit()
+                    )
+                if isinstance(db, D1GatewayAdapter):
+                    user_id = secrets.randbelow(2**62 - 1) + 1
+                    activity_sql, activity_params = _activity_insert_statement(
+                        request,
+                        "operation",
+                        "register_success",
+                        status_code=302,
+                        metadata={"nickname": nickname},
+                        user_id=user_id,
+                        user_nickname=nickname,
+                        ip_address=ip_address,
+                        only_if_user_exists=user_id,
+                    )
+                    results = db.batch(
+                        [
+                            (
+                                """
+                                INSERT INTO users
+                                    (id, real_name, nickname, grade, program, is_admin,
+                                     privacy_consent_at, password_hash, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(nickname) DO NOTHING
+                                """,
+                                (user_id, *insert_params),
+                            ),
+                            (
+                                "UPDATE registration_attempts SET result = ?, user_id = ? "
+                                "WHERE id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ?)",
+                                ("success", user_id, attempt_id, user_id),
+                            ),
+                            (activity_sql, activity_params),
+                        ]
+                    )
+                    if results[0].rowcount != 1:
+                        raise sqlite3.IntegrityError("duplicate nickname")
+                    user = {"id": user_id, "nickname": nickname}
+                else:
+                    db.execute(
+                        insert_sql,
+                        insert_params,
+                    )
+                    db.commit()
+                    user = db.execute(
+                        "SELECT id, nickname FROM users WHERE nickname = ?",
+                        (nickname,),
+                    ).fetchone()
             except sqlite3.IntegrityError:
-                update_registration_attempt(request, attempt_id, "duplicate_nickname")
-                record_activity(
-                    request,
-                    "operation",
+                update_registration_attempt_with_activity(
+                    request, attempt_id, "duplicate_nickname",
                     "register_failed",
                     status_code=409,
                     metadata={"reason": "duplicate_nickname", "nickname": nickname},
@@ -1478,25 +1759,16 @@ def register_routes(app: FastAPI) -> None:
                 flash(request, "这个昵称已经被注册，请换一个。", "error")
                 return render_template(request, "register.html")
 
-            user = (
-                get_db(request)
-                .execute(
-                    "SELECT id, nickname FROM users WHERE nickname = ?",
-                    (nickname,),
+            if not isinstance(db, D1GatewayAdapter):
+                update_registration_attempt_with_activity(
+                    request, attempt_id, "success",
+                    "register_success",
+                    status_code=302,
+                    metadata={"nickname": nickname},
+                    user_id=user["id"],
+                    user_nickname=user["nickname"],
+                    ip_address=ip_address,
                 )
-                .fetchone()
-            )
-            update_registration_attempt(request, attempt_id, "success", user["id"])
-            record_activity(
-                request,
-                "operation",
-                "register_success",
-                status_code=302,
-                metadata={"nickname": nickname},
-                user_id=user["id"],
-                user_nickname=user["nickname"],
-                ip_address=ip_address,
-            )
             request.session.clear()
             request.session["user_id"] = user["id"]
             request.session["nickname"] = user["nickname"]
@@ -1618,18 +1890,16 @@ def register_routes(app: FastAPI) -> None:
             )
             return RedirectResponse(url=next_url, status_code=302)
 
-        get_db(request).execute(
-            "UPDATE users SET privacy_consent_at = ? WHERE id = ?",
-            (datetime.now().isoformat(timespec="seconds"), user["id"]),
-        )
-        get_db(request).commit()
-        record_activity(
+        execute_with_activity(
             request,
-            "operation",
+            [("UPDATE users SET privacy_consent_at = ? WHERE id = ?", (
+                datetime.now().isoformat(timespec="seconds"), user["id"]
+            ))],
             "privacy_consent_accepted",
             status_code=302,
             user_id=user["id"],
             user_nickname=user["nickname"],
+            audit_only_if_user_exists=user["id"],
         )
         request.state.user = None
         flash(
@@ -1679,19 +1949,17 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "请选择有效的年级和项目。", "error")
             return redirect_to(request, "profile")
 
-        get_db(request).execute(
-            "UPDATE users SET grade = ?, program = ? WHERE id = ?",
-            (grade, program, user["id"]),
-        )
-        get_db(request).commit()
-        record_activity(
+        execute_with_activity(
             request,
-            "operation",
+            [("UPDATE users SET grade = ?, program = ? WHERE id = ?", (
+                grade, program, user["id"]
+            ))],
             "profile_details_updated",
             status_code=302,
             metadata={"grade": grade, "program": program},
             user_id=user["id"],
             user_nickname=user["nickname"],
+            audit_only_if_user_exists=user["id"],
         )
         request.state.user = None
         flash(request, "个人资料已更新。", "success")
@@ -1732,11 +2000,16 @@ def register_routes(app: FastAPI) -> None:
             return redirect_to(request, "profile")
 
         try:
-            get_db(request).execute(
-                "UPDATE users SET nickname = ? WHERE id = ?",
-                (new_nickname, user["id"]),
+            execute_with_activity(
+                request,
+                [("UPDATE users SET nickname = ? WHERE id = ?", (new_nickname, user["id"]))],
+                "nickname_updated",
+                status_code=302,
+                metadata={"old_nickname": user["nickname"], "new_nickname": new_nickname},
+                user_id=user["id"],
+                user_nickname=new_nickname,
+                audit_only_if_user_exists=user["id"],
             )
-            get_db(request).commit()
         except sqlite3.IntegrityError:
             record_activity(
                 request,
@@ -1750,15 +2023,6 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "这个昵称已经被使用，请换一个。", "error")
             return redirect_to(request, "profile")
 
-        record_activity(
-            request,
-            "operation",
-            "nickname_updated",
-            status_code=302,
-            metadata={"old_nickname": user["nickname"], "new_nickname": new_nickname},
-            user_id=user["id"],
-            user_nickname=new_nickname,
-        )
         request.session["nickname"] = new_nickname
         request.state.user = None
         flash(request, "昵称已更新。", "success")
@@ -1829,18 +2093,16 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "当前密码不正确。", "error")
             return redirect_to(request, "profile")
 
-        get_db(request).execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (generate_password_hash(new_password), user["id"]),
-        )
-        get_db(request).commit()
-        record_activity(
+        execute_with_activity(
             request,
-            "operation",
+            [("UPDATE users SET password_hash = ? WHERE id = ?", (
+                generate_password_hash(new_password), user["id"]
+            ))],
             "password_updated",
             status_code=302,
             user_id=user["id"],
             user_nickname=user["nickname"],
+            audit_only_if_user_exists=user["id"],
         )
         flash(request, "密码已更新，请使用新密码登录。", "success")
         return redirect_to(request, "profile")
@@ -1911,8 +2173,7 @@ def register_routes(app: FastAPI) -> None:
                 )
 
             now = datetime.now()
-            get_db(request).execute(
-                """
+            mood_sql = """
                 INSERT INTO mood_entries
                     (
                         user_id,
@@ -1925,8 +2186,8 @@ def register_routes(app: FastAPI) -> None:
                         created_at
                     )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
+                """
+            mood_params = (
                     user["id"],
                     json.dumps(scores["responses"], ensure_ascii=False),
                     scores["positive_score"],
@@ -1935,10 +2196,8 @@ def register_routes(app: FastAPI) -> None:
                     daily_note,
                     date.today().isoformat(),
                     now.isoformat(timespec="seconds"),
-                ),
             )
-            get_db(request).commit()
-            record_activity(
+            activity_sql, activity_params = _activity_insert_statement(
                 request,
                 "operation",
                 "mood_report_created",
@@ -1951,7 +2210,17 @@ def register_routes(app: FastAPI) -> None:
                 },
                 user_id=user["id"],
                 user_nickname=user["nickname"],
+                only_if_user_exists=user["id"],
             )
+            db = get_db(request)
+            if str(request.app.state.config.get("DB_BACKEND") or "sqlite").lower() == "d1":
+                # D1 commits every statement individually; keep the mood row and
+                # its audit event atomic by sending one explicit batch.
+                db.batch([(mood_sql, mood_params), (activity_sql, activity_params)])
+            else:
+                db.execute(mood_sql, mood_params)
+                db.execute(activity_sql, activity_params)
+                db.commit()
             balance_label = (
                 f"{scores['balance_score']:+d}" if scores["balance_score"] else "0"
             )
@@ -2059,7 +2328,17 @@ def register_routes(app: FastAPI) -> None:
             return user
 
         search_query = request.query_params.get("q", "").strip()
-        users = get_admin_users(request, search_query)
+        requested_page, page_size = parse_admin_pagination(request)
+        user_count = count_admin_users(request, search_query)
+        pagination = build_pagination(
+            request, user_count, requested_page, page_size
+        )
+        users = get_admin_users(
+            request,
+            search_query,
+            limit=page_size,
+            offset=pagination["offset"],
+        )
         return render_template(
             request,
             "admin.html",
@@ -2068,6 +2347,7 @@ def register_routes(app: FastAPI) -> None:
                 "users": users,
                 "admin_stats": get_admin_stats(request),
                 "search_query": search_query,
+                "pagination": pagination,
                 "recent_entries": [],
             },
         )
@@ -2078,10 +2358,24 @@ def register_routes(app: FastAPI) -> None:
         if isinstance(user, RedirectResponse):
             return user
 
-        target_user, entries, legacy_entries = get_admin_user_detail(request, user_id)
+        requested_page, page_size = parse_admin_pagination(request)
+        target_user = get_admin_user(request, user_id)
         if target_user is None:
             flash(request, "没有找到这个用户。", "error")
             return redirect_to(request, "admin_dashboard")
+
+        pagination = build_pagination(
+            request,
+            int(target_user["entry_count"]),
+            requested_page,
+            page_size,
+        )
+        entries, legacy_entries = get_admin_user_records(
+            request,
+            user_id,
+            limit=page_size,
+            offset=pagination["offset"],
+        )
 
         return render_template(
             request,
@@ -2091,6 +2385,7 @@ def register_routes(app: FastAPI) -> None:
                 "target_user": target_user,
                 "entries": entries,
                 "legacy_entries": legacy_entries,
+                "pagination": pagination,
                 "week_chart": get_mood_chart_data(request, user_id, 7),
                 "month_chart": get_mood_chart_data(request, user_id, 30),
                 "recent_entries": [],
@@ -2124,20 +2419,26 @@ def register_routes(app: FastAPI) -> None:
                 flash(request, "注册限制需要填写 1 到 100 之间的整数。", "error")
                 return redirect_to(request, "admin_settings")
 
-            set_app_setting(
+            setting_sql = """
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+            """
+            execute_with_activity(
                 request,
-                REGISTRATION_IP_LIMIT_SETTING,
-                str(registration_limit),
-            )
-            get_db(request).commit()
-            record_activity(
-                request,
-                "operation",
+                [(setting_sql, (
+                    REGISTRATION_IP_LIMIT_SETTING,
+                    str(registration_limit),
+                    datetime.now().isoformat(timespec="seconds"),
+                ))],
                 "admin_settings_updated",
                 status_code=302,
                 metadata={REGISTRATION_IP_LIMIT_SETTING: registration_limit},
                 user_id=user["id"],
                 user_nickname=user["nickname"],
+                audit_only_if_user_exists=user["id"],
             )
             flash(request, "管理员设置已更新。", "success")
             return redirect_to(request, "admin_settings")
@@ -2164,18 +2465,22 @@ def register_routes(app: FastAPI) -> None:
             "ip": request.query_params.get("ip", "").strip(),
             "q": request.query_params.get("q", "").strip(),
         }
+        requested_page, page_size = parse_admin_pagination(request)
+        activity_summary = get_activity_log_summary(request, filters)
+        pagination = build_pagination(
+            request, int(activity_summary["activity_count"]), requested_page, page_size
+        )
         return render_template(
             request,
             "admin_activity.html",
             {
                 "active_page": "admin_activity",
                 "activity_logs": get_activity_logs(
-                    request,
-                    filters,
-                    limit=None if filters["user_id"] else 200,
+                    request, filters, limit=page_size, offset=pagination["offset"]
                 ),
                 "activity_user_stats": get_activity_user_stats(request),
                 "filters": filters,
+                "pagination": pagination,
                 "recent_entries": [],
             },
         )
@@ -2191,10 +2496,14 @@ def register_routes(app: FastAPI) -> None:
             flash(request, "请选择要查看动态的用户。", "error")
             return redirect_to(request, "admin_activity")
 
+        filters = {"user_id": user_key, "ip": "", "q": ""}
+        requested_page, page_size = parse_admin_pagination(request)
+        activity_summary = get_activity_log_summary(request, filters)
+        pagination = build_pagination(
+            request, int(activity_summary["activity_count"]), requested_page, page_size
+        )
         activity_logs = get_activity_logs(
-            request,
-            {"user_id": user_key, "ip": "", "q": ""},
-            limit=None,
+            request, filters, limit=page_size, offset=pagination["offset"]
         )
         return render_template(
             request,
@@ -2203,6 +2512,8 @@ def register_routes(app: FastAPI) -> None:
                 "active_page": "admin_activity",
                 "activity_target": get_activity_user_target(request, user_key),
                 "activity_logs": activity_logs,
+                "latest_activity_at": activity_summary["latest_activity_at"],
+                "pagination": pagination,
                 "recent_entries": [],
             },
         )
@@ -2288,39 +2599,16 @@ def register_routes(app: FastAPI) -> None:
         ]
         target_placeholders = sql_placeholders(target_ids)
         target_params = tuple(target_ids)
-        db = get_db(request)
-        db.execute(
-            f"DELETE FROM mood_entries WHERE user_id IN ({target_placeholders})",
-            target_params,
-        )
-        db.execute(
-            f"DELETE FROM legacy_mood_entries WHERE user_id IN ({target_placeholders})",
-            target_params,
-        )
-        db.execute(
-            f"""
-            UPDATE registration_attempts
-            SET user_id = NULL
-            WHERE user_id IN ({target_placeholders})
-            """,
-            target_params,
-        )
-        db.execute(
-            f"""
-            UPDATE activity_logs
-            SET user_id = NULL
-            WHERE user_id IN ({target_placeholders})
-            """,
-            target_params,
-        )
-        db.execute(
-            f"DELETE FROM users WHERE id IN ({target_placeholders})",
-            target_params,
-        )
-        db.commit()
-        record_activity(
+        delete_statements = [
+            (f"DELETE FROM mood_entries WHERE user_id IN ({target_placeholders})", target_params),
+            (f"DELETE FROM legacy_mood_entries WHERE user_id IN ({target_placeholders})", target_params),
+            (f"UPDATE registration_attempts SET user_id = NULL WHERE user_id IN ({target_placeholders})", target_params),
+            (f"UPDATE activity_logs SET user_id = NULL WHERE user_id IN ({target_placeholders})", target_params),
+            (f"DELETE FROM users WHERE id IN ({target_placeholders})", target_params),
+        ]
+        execute_with_activity(
             request,
-            "operation",
+            delete_statements,
             "admin_deleted_users",
             status_code=302,
             metadata={
@@ -2331,6 +2619,7 @@ def register_routes(app: FastAPI) -> None:
             },
             user_id=user["id"],
             user_nickname=user["nickname"],
+            audit_only_if_user_exists=user["id"],
         )
 
         message = f"已删除 {len(target_ids)} 个用户。"
@@ -2367,14 +2656,9 @@ def register_routes(app: FastAPI) -> None:
             return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
 
         is_admin = 1 if role == "admin" else 0
-        get_db(request).execute(
-            "UPDATE users SET is_admin = ? WHERE id = ?",
-            (is_admin, user_id),
-        )
-        get_db(request).commit()
-        record_activity(
+        execute_with_activity(
             request,
-            "operation",
+            [("UPDATE users SET is_admin = ? WHERE id = ?", (is_admin, user_id))],
             "admin_updated_user_role",
             status_code=302,
             metadata={
@@ -2384,6 +2668,7 @@ def register_routes(app: FastAPI) -> None:
             },
             user_id=user["id"],
             user_nickname=user["nickname"],
+            audit_only_if_user_exists=user_id,
         )
         flash(
             request,
@@ -2420,14 +2705,9 @@ def register_routes(app: FastAPI) -> None:
             return RedirectResponse(url=f"/admin/users/{user_id}", status_code=302)
 
         is_active = 1 if status == "active" else 0
-        get_db(request).execute(
-            "UPDATE users SET is_active = ? WHERE id = ?",
-            (is_active, user_id),
-        )
-        get_db(request).commit()
-        record_activity(
+        execute_with_activity(
             request,
-            "operation",
+            [("UPDATE users SET is_active = ? WHERE id = ?", (is_active, user_id))],
             "admin_updated_user_status",
             status_code=302,
             metadata={
@@ -2437,6 +2717,7 @@ def register_routes(app: FastAPI) -> None:
             },
             user_id=user["id"],
             user_nickname=user["nickname"],
+            audit_only_if_user_exists=user_id,
         )
         flash(
             request,
@@ -2641,7 +2922,87 @@ def get_admin_stats(request: Request) -> dict[str, int]:
     }
 
 
-def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Row]:
+def parse_positive_int(value: str | None, default: int) -> int:
+    try:
+        parsed = int(value or "")
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def parse_admin_pagination(request: Request) -> tuple[int, int]:
+    page = parse_positive_int(request.query_params.get("page"), 1)
+    page_size = min(
+        parse_positive_int(
+            request.query_params.get("page_size"), ADMIN_PAGE_SIZE_DEFAULT
+        ),
+        ADMIN_PAGE_SIZE_MAX,
+    )
+    return page, page_size
+
+
+def build_pagination(
+    request: Request,
+    total_items: int,
+    requested_page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    page = min(requested_page, total_pages)
+    query = dict(request.query_params)
+    query["page_size"] = str(page_size)
+
+    def page_url(target_page: int) -> str:
+        target_query = {**query, "page": str(target_page)}
+        return f"{request.url.path}?{urlencode(target_query)}"
+
+    first_item = (page - 1) * page_size + 1 if total_items else 0
+    last_item = min(page * page_size, total_items)
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "offset": (page - 1) * page_size,
+        "first_item": first_item,
+        "last_item": last_item,
+        "previous_url": page_url(page - 1) if page > 1 else None,
+        "next_url": page_url(page + 1) if page < total_pages else None,
+    }
+
+
+def admin_user_filter(search_query: str) -> tuple[str, tuple[str, ...]]:
+    if not search_query:
+        return "", ()
+    like_query = f"%{search_query}%"
+    nickname_query = f"%{search_query.removeprefix('@')}%"
+    return (
+        """
+        WHERE users.real_name LIKE ?
+           OR users.nickname LIKE ?
+           OR users.grade LIKE ?
+           OR users.program LIKE ?
+           OR CAST(users.id AS TEXT) LIKE ?
+        """,
+        (like_query, nickname_query, like_query, like_query, like_query),
+    )
+
+
+def count_admin_users(request: Request, search_query: str = "") -> int:
+    where_sql, params = admin_user_filter(search_query)
+    row = get_db(request).execute(
+        f"SELECT COUNT(*) AS count FROM users {where_sql}", params
+    ).fetchone()
+    return int(row["count"])
+
+
+def get_admin_users(
+    request: Request,
+    search_query: str = "",
+    *,
+    limit: int = ADMIN_PAGE_SIZE_DEFAULT,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
     sql = """
     SELECT
         users.id,
@@ -2672,31 +3033,19 @@ def get_admin_users(request: Request, search_query: str = "") -> list[sqlite3.Ro
         ) AS latest_entry_at
     FROM users
     """
-    params: tuple[str, ...] = ()
-    if search_query:
-        sql += """
-        WHERE users.real_name LIKE ?
-           OR users.nickname LIKE ?
-           OR users.grade LIKE ?
-           OR users.program LIKE ?
-           OR CAST(users.id AS TEXT) LIKE ?
-        """
-        like_query = f"%{search_query}%"
-        nickname_query = f"%{search_query.removeprefix('@')}%"
-        params = (like_query, nickname_query, like_query, like_query, like_query)
+    where_sql, params = admin_user_filter(search_query)
+    sql += where_sql
 
     sql += """
     ORDER BY users.created_at DESC, users.id DESC
+    LIMIT ? OFFSET ?
     """
-    return get_db(request).execute(sql, params).fetchall()
+    return get_db(request).execute(sql, (*params, limit, offset)).fetchall()
 
 
-def get_admin_user_detail(
-    request: Request,
-    user_id: int,
-) -> tuple[sqlite3.Row | None, list[sqlite3.Row], list[sqlite3.Row]]:
+def get_admin_user(request: Request, user_id: int) -> sqlite3.Row | None:
     db = get_db(request)
-    user = db.execute(
+    return db.execute(
         """
         SELECT
             users.id,
@@ -2730,30 +3079,63 @@ def get_admin_user_detail(
         """,
         (user_id,),
     ).fetchone()
-    if user is None:
-        return None, [], []
 
-    entries = db.execute(
+
+def get_admin_user_records(
+    request: Request,
+    user_id: int,
+    *,
+    limit: int = ADMIN_PAGE_SIZE_DEFAULT,
+    offset: int = 0,
+) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
+    records = get_db(request).execute(
         """
-        SELECT
-            id,
-            user_id,
-            panas_responses,
-            positive_score,
-            negative_score,
-            mood_score,
-            daily_note,
-            entry_date,
-            created_at
-        FROM mood_entries
-        WHERE user_id = ?
-        ORDER BY created_at DESC, id DESC
+        SELECT *
+        FROM (
+            SELECT
+                0 AS record_group,
+                id,
+                user_id,
+                panas_responses,
+                positive_score,
+                negative_score,
+                mood_score,
+                daily_note,
+                entry_date,
+                created_at,
+                NULL AS source_entry_id,
+                NULL AS mood_emoji,
+                NULL AS reason,
+                NULL AS archived_at
+            FROM mood_entries
+            WHERE user_id = ?
+            UNION ALL
+            SELECT
+                1 AS record_group,
+                id,
+                user_id,
+                NULL AS panas_responses,
+                NULL AS positive_score,
+                NULL AS negative_score,
+                NULL AS mood_score,
+                NULL AS daily_note,
+                entry_date,
+                created_at,
+                source_entry_id,
+                mood_emoji,
+                reason,
+                archived_at
+            FROM legacy_mood_entries
+            WHERE user_id = ?
+        ) AS records
+        ORDER BY record_group ASC, created_at DESC, id DESC
+        LIMIT ? OFFSET ?
         """,
-        (user_id,),
+        (user_id, user_id, limit, offset),
     ).fetchall()
-
-    legacy_entries = get_legacy_user_entries(request, user_id)
-    return user, entries, legacy_entries
+    entries = [record for record in records if record["record_group"] == 0]
+    legacy_entries = [record for record in records if record["record_group"] == 1]
+    return entries, legacy_entries
 
 
 def get_activity_user_target(request: Request, user_key: str) -> dict[str, Any]:
@@ -2811,30 +3193,10 @@ def get_activity_user_target(request: Request, user_key: str) -> dict[str, Any]:
     }
 
 
-def get_activity_logs(
-    request: Request,
+def activity_log_filter(
     filters: dict[str, str] | None = None,
-    limit: int | None = 200,
-) -> list[sqlite3.Row]:
+) -> tuple[str, list[Any]]:
     filters = filters or {}
-    sql = """
-    SELECT
-        activity_logs.id,
-        activity_logs.user_id,
-        activity_logs.user_nickname,
-        activity_logs.ip_address,
-        activity_logs.method,
-        activity_logs.path,
-        activity_logs.status_code,
-        activity_logs.event_type,
-        activity_logs.action,
-        activity_logs.metadata,
-        activity_logs.created_at,
-        users.real_name,
-        users.nickname
-    FROM activity_logs
-    LEFT JOIN users ON users.id = activity_logs.user_id
-    """
     clauses: list[str] = []
     params: list[Any] = []
 
@@ -2900,15 +3262,58 @@ def get_activity_logs(
             ]
         )
 
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
+    where_sql = " WHERE " + " AND ".join(clauses) if clauses else ""
+    return where_sql, params
 
-    sql += """
+
+def get_activity_log_summary(
+    request: Request,
+    filters: dict[str, str] | None = None,
+) -> sqlite3.Row:
+    where_sql, params = activity_log_filter(filters)
+    row = get_db(request).execute(
+        f"""
+        SELECT
+            COUNT(*) AS activity_count,
+            MAX(activity_logs.created_at) AS latest_activity_at
+        FROM activity_logs
+        LEFT JOIN users ON users.id = activity_logs.user_id
+        {where_sql}
+        """,
+        tuple(params),
+    ).fetchone()
+    return row
+
+
+def get_activity_logs(
+    request: Request,
+    filters: dict[str, str] | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    where_sql, params = activity_log_filter(filters)
+    sql = f"""
+    SELECT
+        activity_logs.id,
+        activity_logs.user_id,
+        activity_logs.user_nickname,
+        activity_logs.ip_address,
+        activity_logs.method,
+        activity_logs.path,
+        activity_logs.status_code,
+        activity_logs.event_type,
+        activity_logs.action,
+        activity_logs.metadata,
+        activity_logs.created_at,
+        users.real_name,
+        users.nickname
+    FROM activity_logs
+    LEFT JOIN users ON users.id = activity_logs.user_id
+    {where_sql}
     ORDER BY activity_logs.created_at DESC, activity_logs.id DESC
+    LIMIT ? OFFSET ?
     """
-    if limit is not None:
-        sql += " LIMIT ?"
-        params.append(limit)
+    params.extend([limit, offset])
     return get_db(request).execute(sql, tuple(params)).fetchall()
 
 
