@@ -24,12 +24,12 @@ from joserfc.errors import JoseError
 from starlette.routing import NoMatchFound
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from database_adapter import D1GatewayAdapter, SQLiteAdapter
 from techx_auth import (
     DatabaseSessionMiddleware,
     configure_oidc,
     validate_backchannel_logout,
 )
-from database_adapter import D1GatewayAdapter, SQLiteAdapter
 
 
 def load_env_file(path: Path) -> None:
