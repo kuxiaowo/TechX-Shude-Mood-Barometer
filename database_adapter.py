@@ -137,4 +137,5 @@ class SQLiteAdapter:
     def connect(path):
         db = sqlite3.connect(path)
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA synchronous = FULL")
         return db

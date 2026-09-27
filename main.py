@@ -308,6 +308,7 @@ def init_db(app: FastAPI) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
+        db.execute("PRAGMA synchronous = FULL")
         db.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
