@@ -239,6 +239,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
                     status_code=403, content={"detail": "拒绝跨站请求"}
                 )
             response = await call_next(request)
+            user = get_current_user(request) if request.session.get("auth_sub") else None
+            if user is not None and user["auth_sub"]:
+                response.headers["X-Nethub-User-Sub"] = str(user["auth_sub"])
             if should_log_access(request):
                 record_activity(
                     request,
