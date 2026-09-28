@@ -5,7 +5,6 @@ import pytest
 
 import main
 
-
 CONFIG = {
     "TURNSTILE_SECRET_KEY": "test-secret",
     "PUBLIC_BASE_URL": "https://sdgj.tech",
