@@ -19,7 +19,11 @@ from main import (
 
 
 @pytest.fixture()
-def app(tmp_path):
+def app(tmp_path, monkeypatch):
+    async def verified(_config, _token, _action):
+        return True
+
+    monkeypatch.setattr("main.verify_turnstile", verified)
     return create_app(
         {
             "TESTING": True,
@@ -1710,7 +1714,11 @@ def test_balance_percentage_maps_to_calendar_direction(score, emoji, label):
     assert mood["label"] == label
 
 
-def test_sqlite_data_persists_across_app_recreation(tmp_path):
+def test_sqlite_data_persists_across_app_recreation(tmp_path, monkeypatch):
+    async def verified(_config, _token, _action):
+        return True
+
+    monkeypatch.setattr("main.verify_turnstile", verified)
     db_path = tmp_path / "persistent.sqlite3"
     first_app = create_app(
         {"TESTING": True, "DATABASE": str(db_path), "SECRET_KEY": "test-secret"}

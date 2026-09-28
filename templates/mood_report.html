@@ -1,6 +1,7 @@
 {% extends "dashboard.html" %}
 
 {% block title %}今日心情量表 - TechX心情晴雨表{% endblock %}
+{% block extra_head %}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>{% endblock %}
 {% block content_card_class %}panas-card{% endblock %}
 
 {% block content %}
@@ -89,6 +90,7 @@
 
       <p class="panas-score-note">情感平衡是正性减负性后的辅助读数；两个维度仍需分别理解，结果不用于医疗诊断。</p>
       <button class="primary-button" type="submit">保存今日量表</button>
+      <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-action="mood-report"></div>
     </aside>
   </div>
 </form>
