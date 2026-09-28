@@ -6,6 +6,7 @@
   <title>{% block title %}TechX心情晴雨表{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=common-app-refresh1">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  {% block extra_head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block body %}{% endblock %}

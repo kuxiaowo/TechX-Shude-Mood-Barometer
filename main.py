@@ -57,6 +57,33 @@ BASE_DIR = Path(__file__).resolve().parent
 load_env_file(BASE_DIR / ".env")
 
 DEFAULT_DATABASE = BASE_DIR / "data" / "mood_barometer.sqlite3"
+
+
+class TurnstileUnavailable(Exception):
+    pass
+
+
+async def verify_turnstile(config: dict[str, Any], token: str, action: str) -> bool:
+    if not token or len(token) > 2048:
+        return False
+    secret = str(config.get("TURNSTILE_SECRET_KEY") or "")
+    if not secret:
+        raise TurnstileUnavailable
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.post(
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                data={"secret": secret, "response": token},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise TurnstileUnavailable from exc
+    return (
+        result.get("success") is True
+        and result.get("hostname") == urlsplit(config["PUBLIC_BASE_URL"]).hostname
+        and result.get("action") == action
+    )
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 AUTH_BACKGROUND_DIR = STATIC_DIR / "login-backgrounds"
@@ -187,6 +214,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
         ).rstrip("/"),
         "OIDC_CLIENT_ID": os.environ.get("ACCOUNTS_CLIENT_ID", "techx"),
         "OIDC_CLIENT_SECRET": os.environ.get("ACCOUNTS_CLIENT_SECRET", ""),
+        "TURNSTILE_SITE_KEY": os.environ.get("TURNSTILE_SITE_KEY", "").strip(),
+        "TURNSTILE_SECRET_KEY": os.environ.get("TURNSTILE_SECRET_KEY", "").strip(),
         "OIDC_JWKS": None,
         "LEGACY_AUTH_ENABLED": False,
         "ADMIN_NICKNAME": os.environ.get("MOOD_ADMIN_NICKNAME", "").strip(),
@@ -1088,6 +1117,7 @@ def render_template(
             "accounts_logout_url": f"{issuer}/oauth/logout",
             "accounts_avatar_url": accounts_avatar_url,
             "legacy_auth_enabled": request.app.state.config["LEGACY_AUTH_ENABLED"],
+            "turnstile_site_key": request.app.state.config["TURNSTILE_SITE_KEY"],
             **(context or {}),
         },
         status_code=status_code,
@@ -2124,6 +2154,32 @@ def register_routes(app: FastAPI) -> None:
                 item["key"]: str(form.get(item["key"], "")).strip()
                 for item in PANAS_ITEMS
             }
+            try:
+                verified = await verify_turnstile(
+                    request.app.state.config,
+                    str(form.get("cf-turnstile-response", "")),
+                    "mood-report",
+                )
+            except TurnstileUnavailable:
+                verified = False
+                status_code = 503
+                message = "人机验证暂不可用，请稍后重试。"
+            else:
+                status_code = 400
+                message = "请完成人机验证后重试。"
+            if not verified:
+                flash(request, message, "error")
+                return render_template(
+                    request,
+                    "mood_report.html",
+                    {
+                        "active_page": "mood_report",
+                        "recent_entries": get_recent_entries(request, user["id"]),
+                        "submitted_responses": responses,
+                        "submitted_daily_note": daily_note,
+                    },
+                    status_code=status_code,
+                )
             scores = calculate_panas_scores(responses)
 
             if len(daily_note) > DAILY_NOTE_MAX_LENGTH:
