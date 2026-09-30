@@ -233,8 +233,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> FastAPI:
     if not str(config["OIDC_CLIENT_ID"]).strip():
         raise ValueError("ACCOUNTS_CLIENT_ID cannot be empty")
     backend = str(config.get("DB_BACKEND") or "sqlite").strip().lower()
-    if backend not in {"sqlite", "d1"}:
-        raise ValueError(f"Unsupported MOOD_DB_BACKEND: {backend}")
+    if backend != "sqlite":
+        raise ValueError("MOOD_DB_BACKEND must be sqlite")
     if backend == "d1" and (
         not str(config.get("D1_GATEWAY_URL") or "").strip()
         or not str(config.get("D1_GATEWAY_SECRET") or "")
