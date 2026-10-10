@@ -230,7 +230,7 @@ def test_existing_member_keeps_local_profile_role_and_privacy(
     assert user["privacy_consent_at"] == "2026-01-01T00:00:00"
 
 
-def test_accounts_outage_does_not_break_existing_local_session(monkeypatch, oidc_app):
+def test_oidc_authorization_outage_with_status_service_available(monkeypatch, oidc_app):
     sub = str(uuid.uuid4())
     with sqlite3.connect(oidc_app.state.config["DATABASE"]) as db:
         cursor = db.execute(
@@ -430,3 +430,22 @@ def test_mapping_preserves_ids_business_data_roles_and_privacy(tmp_path):
         == "scrypt:legacy"
     )
     assert apply_mapping(database, mapping, dry_run=False)["users"] == 1
+
+
+@pytest.mark.parametrize("inactive", [False, True])
+def test_central_status_outage_or_ban_blocks_existing_session(monkeypatch, oidc_app, inactive):
+    from nethub_status import AccountStatusUnavailable
+    sub = str(uuid.uuid4())
+    with sqlite3.connect(oidc_app.state.config["DATABASE"]) as db:
+        user_id = db.execute("INSERT INTO users(real_name,nickname,is_admin,is_active,privacy_consent_at,password_hash,auth_sub,created_at) VALUES('Existing','existing',0,1,'2026-01-01','',?,'2026-01-01')", (sub,)).lastrowid
+        db.commit()
+    raw = create_test_session(oidc_app.state.config["DATABASE"], user_id=user_id, auth_sub=sub)
+    browser = TestClient(oidc_app, follow_redirects=False)
+    browser.cookies.set(SESSION_COOKIE, raw)
+    def unavailable(*args):
+        if inactive:
+            return {"active": False, "emailVerified": True}
+        raise AccountStatusUnavailable("test outage")
+    monkeypatch.setattr("nethub_status.read_account_status", unavailable)
+    assert browser.get("/profile").status_code == (403 if inactive else 503)
+    assert bool(db_rows(oidc_app, "SELECT token_hash FROM web_sessions")) is not inactive
