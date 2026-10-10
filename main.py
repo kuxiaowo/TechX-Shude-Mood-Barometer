@@ -15,7 +15,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import httpx
 import uvicorn
 from authlib.integrations.base_client import OAuthError
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -720,6 +720,19 @@ def require_user(request: Request) -> sqlite3.Row | RedirectResponse:
     user = get_current_user(request)
     if user is None:
         return redirect_to(request, "login", next=request_return_url(request))
+    from nethub_status import AccountStatusUnavailable, read_account_status
+    status = getattr(request.state, "central_account_status", None)
+    if status is None:
+        config = request.app.state.config
+        try:
+            status = read_account_status(config["OIDC_ISSUER"], config["OIDC_CLIENT_ID"], config["OIDC_CLIENT_SECRET"], user["auth_sub"])
+        except AccountStatusUnavailable:
+            raise HTTPException(503, "账号中心暂时不可用，请稍后重试") from None
+        request.state.central_account_status = status
+    if not status["active"]:
+        request.session.clear()
+        request.state.user = None
+        raise HTTPException(403, "账号已被全站封禁或停用")
     return user
 
 
