@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=common-app-refresh1">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
   {% block extra_head %}{% endblock %}
+  <script src="/__nethub/client.js?v=1" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block body %}{% endblock %}
